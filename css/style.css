@@ -1,0 +1,837 @@
+:root {
+    --color-bg-glass: rgba(255, 255, 255, 0.15);
+    /* More transparent */
+    --color-bg-glass-border: rgba(255, 255, 255, 0.2);
+    --color-text-main: #ffffff;
+    --color-text-secondary: rgba(255, 255, 255, 0.7);
+    --color-accent: #ffe135;
+    /* Default Banana */
+    --shadow-glass: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+    --font-main: 'Outfit', sans-serif;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--font-main);
+    color: var(--color-text-main);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow-x: hidden;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8), 0 4px 12px rgba(0, 0, 0, 0.6);
+}
+
+/* Animated Backgrounds */
+.background-layer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    background-size: cover;
+    background-position: center;
+    transition: background-image 0.5s ease;
+}
+
+.background-layer.animate-bg {
+    background-size: 400% 400%;
+}
+
+@keyframes gradientBG {
+    0% {
+        background-position: 0% 50%;
+    }
+
+    50% {
+        background-position: 100% 50%;
+    }
+
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
+.animate-bg {
+    animation: gradientBG 15s ease infinite;
+}
+
+/* Liquid Glass Container */
+.app-wrapper {
+    display: flex;
+    width: 90%;
+    max-width: 1000px;
+    height: 85vh;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 30px;
+    border: 1px solid var(--color-bg-glass-border);
+    box-shadow: var(--shadow-glass);
+    overflow: hidden;
+    position: relative;
+}
+
+/* Square layout on larger screens */
+@media (min-width: 1024px) {
+    .app-wrapper {
+        width: min(85vh, 85vw);
+        height: min(85vh, 85vw);
+        max-width: 800px;
+        max-height: 800px;
+    }
+}
+
+/* Sidebar */
+.sidebar {
+    width: 280px;
+    background: rgba(0, 0, 0, 0.2);
+    /* Slightly darker for contrast */
+    border-right: 1px solid var(--color-bg-glass-border);
+    display: flex;
+    flex-direction: column;
+    padding: 1.5rem;
+    transition: transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
+    z-index: 10;
+}
+
+/* Hidden by default on mobile AND desktop if requested, but usually desktop sidebar is visible. 
+   User asked for "hidden by default". We will handle this via a class toggled in JS or CSS.
+   Let's make it collapsible. */
+.sidebar.collapsed {
+    transform: translateX(-100%);
+    position: absolute;
+    height: 100%;
+}
+
+.sidebar-header {
+    margin-bottom: 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.sidebar-header h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.lists-nav {
+    list-style: none;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.list-item {
+    padding: 0.8rem 1rem;
+    margin-bottom: 0.5rem;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 500;
+}
+
+.list-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.list-item.active {
+    background: rgba(255, 255, 255, 0.2);
+    border-left: 4px solid var(--color-accent);
+}
+
+.add-list-btn {
+    width: 100%;
+    padding: 0.8rem;
+    background: transparent;
+    border: 1px dashed rgba(255, 255, 255, 0.3);
+    border-radius: 12px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    margin-top: 1rem;
+    transition: all 0.3s ease;
+}
+
+.add-list-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: #fff;
+    color: #fff;
+}
+
+/* Main Content */
+.app-container {
+    flex: 1;
+    padding: 2.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    overflow-y: auto;
+    position: relative;
+    transition: margin-left 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* Header */
+header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+}
+
+#menu-btn {
+    position: absolute;
+    left: 0;
+}
+
+.header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    align-items: center;
+    text-align: center;
+}
+
+.header-top-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+#list-title {
+    font-size: 2.5rem;
+    font-weight: 800;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sort-btn {
+    position: absolute;
+    right: 0;
+}
+
+#current-date {
+    display: none;
+}
+
+/* Inputs */
+.input-group {
+    display: flex;
+    gap: 1rem;
+}
+
+#todo-input {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 1rem 1.5rem;
+    color: white;
+    font-family: var(--font-main);
+    font-size: 1.1rem;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(5px);
+}
+
+#todo-input:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.15);
+    border-color: var(--color-accent);
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+}
+
+#add-btn {
+    background: var(--color-accent);
+    border: none;
+    width: 50px;
+    height: 50px;
+    /* Square/Circle */
+    border-radius: 16px;
+    color: #1a1a1a;
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#add-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 15px var(--color-accent);
+}
+
+/* Todo List */
+#todo-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    padding-bottom: 2rem;
+}
+
+.todo-item {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 1rem 1.2rem;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), background 0.3s;
+    border: 1px solid transparent;
+}
+
+.todo-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-2px);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.todo-item.completed {
+    opacity: 0.6;
+}
+
+.todo-item.completed .todo-text,
+.todo-item.completed .todo-input-edit {
+    text-decoration: line-through;
+    color: var(--color-text-secondary);
+}
+
+.checkbox {
+    width: 22px;
+    height: 22px;
+    border: 2px solid var(--color-text-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.todo-item.completed .checkbox {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    position: relative;
+}
+
+.todo-item.completed .checkbox::after {
+    content: '✔';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 12px;
+    color: #1a1a1a;
+}
+
+/* Buttons */
+.btn-icon-small {
+    background: transparent;
+    border: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: 4px;
+    border-radius: 4px;
+    transition: color 0.2s, background 0.2s;
+}
+
+.btn-icon-small:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.delete-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 100, 100, 0.7);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    opacity: 0;
+    /* Hidden by default */
+}
+
+.todo-item:hover .delete-btn {
+    opacity: 1;
+}
+
+.delete-btn:hover {
+    color: #ff4d4d;
+    background: rgba(255, 77, 77, 0.1);
+}
+
+/* Calendar Mini */
+.calendar-mini {
+    margin-top: auto;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 16px;
+    padding: 1rem;
+}
+
+.calendar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.8rem;
+    font-weight: 600;
+}
+
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    text-align: center;
+    font-size: 0.8rem;
+}
+
+.calendar-day-name {
+    color: var(--color-text-secondary);
+    font-size: 0.7rem;
+    margin-bottom: 4px;
+}
+
+.calendar-day {
+    aspect-ratio: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+}
+
+.calendar-day:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.calendar-day.active {
+    background: var(--color-accent);
+    color: #1a1a1a;
+    font-weight: 700;
+}
+
+.calendar-day.has-tasks::after {
+    content: '';
+    position: absolute;
+    bottom: 3px;
+    width: 3px;
+    height: 3px;
+    background: currentColor;
+    border-radius: 50%;
+}
+
+/* Modals */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+}
+
+.modal.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.modal-content {
+    background: rgba(30, 30, 30, 0.95);
+    padding: 2rem;
+    border-radius: 24px;
+    width: 90%;
+    max-width: 450px;
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+
+.modal-content h3 {
+    margin-bottom: 1.5rem;
+}
+
+.modal-input {
+    width: 100%;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    color: white;
+    font-size: 1rem;
+    margin-top: 0.5rem;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-top: 2rem;
+}
+
+.btn-primary,
+.btn-secondary {
+    padding: 10px 20px;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+    transition: transform 0.2s;
+}
+
+.btn-primary {
+    background: var(--color-accent);
+    color: #1a1a1a;
+}
+
+.btn-secondary {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+.btn-primary:hover,
+.btn-secondary:hover {
+    transform: scale(1.05);
+}
+
+/* Color Palette */
+.color-palette {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+
+.color-swatch {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.2s;
+}
+
+.color-swatch:hover {
+    transform: scale(1.1);
+}
+
+.color-swatch.selected {
+    border-color: white;
+    box-shadow: 0 0 0 2px var(--color-accent);
+}
+
+/* Theme Grid */
+.theme-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+}
+
+.theme-option {
+    aspect-ratio: 1;
+    border-radius: 16px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.2s;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+.theme-option:hover {
+    transform: scale(1.05);
+}
+
+.theme-option.selected {
+    border-color: var(--color-accent);
+}
+
+/* Drag & Drop */
+.todo-item.dragging {
+    opacity: 0.5;
+    transform: scale(0.95);
+    background: rgba(255, 255, 255, 0.15);
+}
+
+/* Toggle Button */
+#menu-btn {
+    font-size: 1.5rem;
+    background: transparent;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 5px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .app-wrapper {
+        flex-direction: column;
+        height: 100vh;
+        width: 100%;
+        border-radius: 0;
+        border: none;
+    }
+
+    .sidebar {
+        position: absolute;
+        height: 100%;
+        width: 80%;
+        max-width: 300px;
+        z-index: 20;
+        background: #1a1a1a;
+        /* Solid background for mobile sidebar */
+        transform: translateX(-100%);
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
+
+    /* On mobile, collapsed means hidden (default), open means visible. 
+       We reuse the 'open' class logic or 'collapsed' logic. 
+       Let's stick to 'collapsed' being the default state for sidebar. */
+}
+
+/* Tag Menu */
+.tag-menu {
+    position: absolute;
+    background: rgba(30, 30, 30, 0.95);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 0.5rem;
+    min-width: 200px;
+    z-index: 50;
+}
+
+/* Missing Utility Classes */
+.hidden {
+    display: none !important;
+}
+
+.mobile-only {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .mobile-only {
+        display: block;
+    }
+}
+
+/* Text Buttons */
+.btn-text {
+    background: none;
+    border: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    font-family: var(--font-main);
+    font-size: 0.9rem;
+    transition: color 0.2s;
+}
+
+.btn-text:hover {
+    color: #fff;
+    text-decoration: underline;
+}
+
+/* Inline Inputs */
+.header-title-input {
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-size: 2.5rem;
+    font-weight: 800;
+    font-family: inherit;
+    width: auto;
+    min-width: 100px;
+    border-bottom: 2px solid transparent;
+    transition: border-color 0.2s;
+    text-align: center;
+}
+
+.header-title-input:focus {
+    outline: none;
+    border-bottom-color: var(--color-accent);
+}
+
+.todo-input-edit {
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-size: 1rem;
+    font-family: inherit;
+    width: 100%;
+    padding: 0;
+}
+
+.todo-input-edit:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+}
+
+/* List Dots */
+.list-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.list-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.list-actions {
+    display: flex;
+    gap: 5px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.list-item:hover .list-actions {
+    opacity: 1;
+}
+
+/* Drag Handle */
+.drag-handle {
+    cursor: grab;
+    color: var(--color-text-secondary);
+    padding-right: 10px;
+    opacity: 0.5;
+    font-size: 1.2rem;
+}
+
+.todo-item:hover .drag-handle {
+    opacity: 1;
+}
+
+/* Tags */
+.todo-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.todo-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.task-tag {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #fff;
+    font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.tag-menu-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--color-text-secondary);
+    transition: background 0.2s;
+    border-radius: 8px;
+}
+
+.tag-menu-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+.tag-menu-item.selected {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--color-accent);
+}
+
+.delete-tag-btn {
+    font-size: 1.5rem;
+    line-height: 1;
+    padding: 0 4px;
+}
+
+.tag-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.add-tag {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    margin-top: 4px;
+    padding-top: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+/* Settings Modal */
+.setting-group {
+    margin-bottom: 1.5rem;
+    text-align: left;
+}
+
+.setting-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--color-text-secondary);
+}
+
+.setting-group input[type="color"] {
+    width: 100%;
+    height: 40px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    background: transparent;
+}
+
+.setting-group select {
+    width: 100%;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: #fff;
+}
+
+.todo-actions {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.subtitle {
+    color: var(--color-text-secondary);
+    font-weight: 300;
+    font-size: 0.9rem;
+}

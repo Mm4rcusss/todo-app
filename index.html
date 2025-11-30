@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marcus' Tasks</title>
+
+    <!-- PWA Meta Tags -->
+    <meta name="description" content="A beautiful to-do list app with liquid glass design">
+    <meta name="theme-color" content="#ffe135">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Tasks">
+    <link rel="manifest" href="./manifest.json">
+    <link rel="apple-touch-icon" href="./icon-192.png">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="background-layer"></div>
+
+    <div class="app-wrapper">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h2>Lists</h2>
+                <button id="close-sidebar" class="btn-icon mobile-only">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6L18 18" />
+                    </svg>
+                </button>
+            </div>
+            <ul class="lists-nav" id="lists-nav">
+                <!-- Lists injected here -->
+            </ul>
+            <button id="add-list-btn" class="btn-text">+ New List</button>
+
+            <div class="sidebar-footer">
+                <div class="calendar-mini" id="calendar-mini">
+                    <!-- Calendar injected here -->
+                </div>
+                <button id="theme-btn" class="btn-text">Customize Theme</button>
+            </div>
+        </aside>
+
+        <main class="app-container">
+            <header class="app-header">
+                <button id="menu-btn" class="btn-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="1" />
+                        <circle cx="19" cy="12" r="1" />
+                        <circle cx="5" cy="12" r="1" />
+                    </svg>
+                </button>
+                <div class="header-content">
+                    <h1 id="list-title">My Tasks</h1>
+                    <p class="subtitle" id="current-date">Today</p>
+                </div>
+            </header>
+
+            <div class="input-group">
+                <input type="text" id="todo-input" placeholder="What's on your mind?" autocomplete="off">
+                <button id="add-btn" class="btn-primary">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" />
+                    </svg>
+                </button>
+            </div>
+
+            <ul id="todo-list" class="todo-list">
+                <!-- Tasks will be injected here -->
+            </ul>
+
+            <div class="app-footer">
+                <span id="items-left">0 items left</span>
+                <button id="clear-completed" class="btn-text">Clear Completed</button>
+            </div>
+        </main>
+    </div>
+
+    <div id="theme-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Choose Background</h3>
+            <div class="theme-grid" id="theme-grid">
+                <!-- Themes injected here -->
+            </div>
+            <button id="close-theme-modal" class="btn-primary">Done</button>
+        </div>
+    </div>
+
+    <!-- Tag Creation Modal -->
+    <div id="tag-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Create New Tag</h3>
+            <div class="setting-group">
+                <label>Tag Name</label>
+                <input type="text" id="new-tag-name" placeholder="e.g., Urgent" class="modal-input">
+            </div>
+            <div class="setting-group">
+                <label>Tag Color</label>
+                <div class="color-palette" id="tag-color-palette">
+                    <!-- Swatches injected by JS -->
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button id="cancel-tag-btn" class="btn-secondary">Cancel</button>
+                <button id="save-tag-btn" class="btn-primary">Create Tag</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirm-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3 id="confirm-title">Confirm Action</h3>
+            <p id="confirm-message" style="margin: 1rem 0; color: var(--color-text-secondary);"></p>
+            <div class="modal-actions">
+                <button id="confirm-no-btn" class="btn-secondary">No</button>
+                <button id="confirm-yes-btn" class="btn-primary">Yes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input Modal -->
+    <div id="input-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3 id="input-title">Enter Information</h3>
+            <input type="text" id="input-field" class="modal-input" placeholder="">
+            <div class="modal-actions">
+                <button id="input-cancel-btn" class="btn-secondary">Cancel</button>
+                <button id="input-ok-btn" class="btn-primary">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+    <script>
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then((registration) => {
+                        console.log('Service Worker registered:', registration);
+                    })
+                    .catch((error) => {
+                        console.log('Service Worker registration failed:', error);
+                    });
+            });
+        }
+    </script>
+</body>
+
+</html>
