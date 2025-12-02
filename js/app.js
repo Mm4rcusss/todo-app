@@ -307,9 +307,10 @@ document.addEventListener('DOMContentLoaded', () => {
             // Delete action
             const deleteBtn = li.querySelector('.delete-list-btn');
             if (deleteBtn) {
-                deleteBtn.addEventListener('click', (e) => {
+                deleteBtn.addEventListener('click', async (e) => {
                     e.stopPropagation();
-                    if (confirm(`Delete list "${list.name}" and all its tasks?`)) {
+                    const confirmed = await showConfirm(`Delete list "${list.name}" and all its tasks?`);
+                    if (confirmed) {
                         state.lists = state.lists.filter(l => l.id !== list.id);
                         state.tasks = state.tasks.filter(t => t.listId !== list.id);
                         if (state.currentListId === list.id) {
@@ -406,10 +407,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderTodos() {
         todoList.innerHTML = '';
-        let filteredTasks = state.tasks.filter(t =>
-            t.listId === state.currentListId &&
-            t.date === state.currentDate
-        );
+
+        // Get current list
+        const currentList = state.lists.find(l => l.id === state.currentListId);
+
+        // Filter tasks based on list and date
+        let filteredTasks = state.tasks.filter(t => {
+            // If current list is a daily recurring list, show all tasks from this list regardless of date
+            if (currentList && currentList.resetFrequency === 'daily') {
+                return t.listId === state.currentListId;
+            }
+            // Otherwise, filter by both list and date
+            return t.listId === state.currentListId && t.date === state.currentDate;
+        });
 
         // Sorting
         if (state.settings.sortBy === 'alpha') {
@@ -521,14 +531,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 text: text,
                 completed: false,
                 listId: state.currentListId,
-                date: state.currentDate,
+                date: state.currentDate, // Daily lists will show on all dates, but we still track when task was created
                 tags: [],
                 order: state.tasks.length
             };
             state.tasks.push(newTodo);
             saveState();
             todoInput.value = '';
-            todoInput.focus();
             renderTodos();
             renderCalendar();
         }
