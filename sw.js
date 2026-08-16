@@ -1,72 +1,66 @@
-// Service Worker for offline functionality
-const CACHE_NAME = 'tasks-app-v1';
-const urlsToCache = [
-    '/',
-    '/index.html',
-    '/css/style.css',
-    '/js/app.js',
-    '/assets/background.png',
-    'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap'
+const CACHE_NAME = 'tasks-app-v15';
+const PRECACHE_URLS = [
+    './',
+    './index.html',
+    './css/style.css',
+    './js/app.js',
+    './js/effects.js',
+    './manifest.json',
+    './icon-192.png',
+    './icon-512.png',
+    './assets/background.png'
 ];
 
-// Install event - cache files
 self.addEventListener('install', (event) => {
     event.waitUntil(
-        caches.open(CACHE_NAME)
-            .then((cache) => {
-                console.log('Opened cache');
-                return cache.addAll(urlsToCache);
-            })
+        caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
     );
     self.skipWaiting();
 });
 
-// Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
     event.waitUntil(
-        caches.keys().then((cacheNames) => {
-            return Promise.all(
-                cacheNames.map((cacheName) => {
-                    if (cacheName !== CACHE_NAME) {
-                        console.log('Deleting old cache:', cacheName);
-                        return caches.delete(cacheName);
-                    }
-                })
-            );
-        })
+        caches.keys().then((names) =>
+            Promise.all(names.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name)))
+        )
     );
     self.clients.claim();
 });
 
-// Fetch event - serve from cache, fallback to network
+function isAppShell(request) {
+    const dest = request.destination;
+    return dest === 'document' || dest === 'script' || dest === 'style' || dest === '';
+}
+
 self.addEventListener('fetch', (event) => {
-    event.respondWith(
-        caches.match(event.request)
-            .then((response) => {
-                // Cache hit - return response
-                if (response) {
-                    return response;
-                }
+    const { request } = event;
+    if (request.method !== 'GET' || !request.url.startsWith('http')) return;
 
-                // Clone the request
-                const fetchRequest = event.request.clone();
-
-                return fetch(fetchRequest).then((response) => {
-                    // Check if valid response
-                    if (!response || response.status !== 200 || response.type !== 'basic') {
-                        return response;
+    if (isAppShell(request)) {
+        event.respondWith(
+            fetch(request)
+                .then((response) => {
+                    if (response && response.ok) {
+                        const copy = response.clone();
+                        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
                     }
-
-                    // Clone the response
-                    const responseToCache = response.clone();
-
-                    caches.open(CACHE_NAME)
-                        .then((cache) => {
-                            cache.put(event.request, responseToCache);
-                        });
-
                     return response;
-                });
-            })
+                })
+                .catch(() => caches.match(request).then((cached) => cached || caches.match('./index.html')))
+        );
+        return;
+    }
+
+    event.respondWith(
+        caches.match(request).then((cached) => {
+            if (cached) return cached;
+            return fetch(request).then((response) => {
+                if (response && response.ok) {
+                    const copy = response.clone();
+                    caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+                }
+                return response;
+            });
+        })
     );
 });
