@@ -239,14 +239,16 @@
                     <input type="range" id="widget-pet-scale" min="70" max="220" step="5" value="100">
                 </div>
                 <button type="button" id="widget-reset-btn" class="btn-text">Reset widget layout</button>
-                <p class="setting-hint desktop-only">Turn on edit mode to drag widgets anywhere on the screen, including outside the window. Drag a corner to resize.</p>
+                <p class="setting-hint desktop-only">Turn on edit mode to drag clock and date. Tap or drag the pet — it walks the screen and only catches taps on itself.</p>
             </div>
             <div class="setting-group" id="pet-upload-group" hidden>
+                <label>Choose a pet</label>
+                <div class="pet-choice-grid" id="pet-choice-grid"></div>
                 <label class="theme-upload">
                     <input type="file" id="pet-input" accept="image/gif,image/webp,image/png,image/jpeg" hidden>
-                    <span>Upload a GIF or image</span>
+                    <span>Upload your own GIF</span>
                 </label>
-                <button type="button" id="pet-remove-btn" class="btn-text">Remove pet</button>
+                <button type="button" id="pet-remove-btn" class="btn-text">Remove uploaded pet</button>
                 <p id="pet-status" class="theme-upload-status" hidden></p>
             </div>
             <div class="setting-group" id="template-group" data-template-base="./templates">
@@ -338,6 +340,7 @@
 
     <script src="js/effects.js"></script>
     <script src="js/backup.js"></script>
+    <script src="js/pet.js"></script>
     <script src="js/app.js"></script>
     <script>
         if ('serviceWorker' in navigator) {

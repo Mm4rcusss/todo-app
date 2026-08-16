@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tasks-app-v21';
+const CACHE_NAME = 'tasks-app-v23';
 const PRECACHE_URLS = [
     './',
     './index.html',
@@ -6,12 +6,18 @@ const PRECACHE_URLS = [
     './js/app.js',
     './js/effects.js',
     './js/backup.js',
+    './js/pet.js',
     './manifest.json',
     './favicon.svg',
     './favicon-32.png',
     './icon-192.png',
     './icon-512.png',
-    './assets/background.png'
+    './assets/background.png',
+    './assets/pets/cat.gif',
+    './assets/pets/slime.gif',
+    './assets/pets/bunny.gif',
+    './assets/pets/chick.gif',
+    './assets/pets/fox.gif'
 ];
 
 self.addEventListener('install', (event) => {

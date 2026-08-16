@@ -56,7 +56,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const petStatus = document.getElementById('pet-status');
     const widgetResetBtn = document.getElementById('widget-reset-btn');
     const PET_MEDIA_KEY = 'widget_pet';
+    const PET_ASSET_BASE = '../assets/pets/';
     const STATE_KEY = 'orbit_mobile_state';
+    let petRenderToken = 0;
     const backgroundLayer = document.querySelector('.background-layer');
     const confirmModal = document.getElementById('confirm-modal');
     const confirmMessage = document.getElementById('confirm-message');
@@ -303,6 +305,7 @@ document.addEventListener('DOMContentLoaded', () => {
             sortBy: 'custom',
             sidebar: { side: 'left', mode: 'dock' },
             widgets: { clock: false, date: false, pet: false },
+            petChoice: 'cat',
             widgetPos: {},
             widgetViewport: true,
             window: { width: 68, height: 78 },
@@ -357,6 +360,11 @@ document.addEventListener('DOMContentLoaded', () => {
             state.settings.widgets.clock = Boolean(state.settings.widgets.clock);
             state.settings.widgets.date = Boolean(state.settings.widgets.date);
             state.settings.widgets.pet = Boolean(state.settings.widgets.pet);
+            if (state.settings.petChoice) {
+                state.settings.petChoice = window.OrbitPet
+                    ? window.OrbitPet.normalize(state.settings.petChoice)
+                    : String(state.settings.petChoice);
+            }
             if (!state.settings.widgetPos || typeof state.settings.widgetPos !== 'object') state.settings.widgetPos = {};
             if (!state.settings.widgetViewport) {
                 state.settings.widgetViewport = true;
@@ -1855,6 +1863,7 @@ document.addEventListener('DOMContentLoaded', () => {
         widgetDateToggle.checked = Boolean(state.settings.widgets.date);
         widgetPetToggle.checked = Boolean(state.settings.widgets.pet);
         petUploadGroup.hidden = !state.settings.widgets.pet;
+        if (state.settings.widgets.pet) renderPetChoices();
         ['clock', 'date', 'pet'].forEach((name) => {
             const field = document.querySelector(`[data-widget-scale="${name}"]`);
             const input = document.getElementById(`widget-${name}-scale`);
@@ -1944,8 +1953,9 @@ document.addEventListener('DOMContentLoaded', () => {
         rec.scale = clamp(Number(scale) || WIDGET_SCALE.def, WIDGET_SCALE.min, WIDGET_SCALE.max);
         const el = widgetLayer.querySelector(`[data-widget="${name}"]`);
         if (el) applyWidgetScale(el, name);
+        if (name === 'pet') window.OrbitPet?.setScale(getWidgetScale('pet'));
         syncWidgetScaleUi(name);
-        if (!rec.custom) scheduleWidgetLayout();
+        if (name !== 'pet' && !rec.custom) scheduleWidgetLayout();
         if (persist) saveState();
     }
 
@@ -2067,9 +2077,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const widgets = state.settings.widgets || {};
         const showClock = Boolean(widgets.clock);
         const showDate = Boolean(widgets.date);
-        const showPet = Boolean(widgets.pet);
         widgetLayer.replaceChildren();
-        widgetLayer.hidden = !(showClock || showDate || showPet);
+        widgetLayer.hidden = !(showClock || showDate);
 
         if (showClock) {
             const el = document.createElement('div');
@@ -2086,38 +2095,6 @@ document.addEventListener('DOMContentLoaded', () => {
             widgetLayer.appendChild(createWidgetShell('date', el));
         }
 
-        if (showPet) {
-            const wrap = document.createElement('div');
-            wrap.className = 'widget widget-pet';
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'pet-frame';
-            btn.setAttribute('aria-label', 'Upload a GIF pet');
-            const img = document.createElement('img');
-            img.alt = 'Pet';
-            img.hidden = true;
-            const placeholder = document.createElement('span');
-            placeholder.className = 'pet-placeholder';
-            placeholder.textContent = '✧';
-            btn.append(img, placeholder);
-            wallpaperGet(PET_MEDIA_KEY).then((url) => {
-                if (!url) return;
-                img.src = url;
-                img.hidden = false;
-                placeholder.hidden = true;
-                if (!widgetRecord('pet').custom) placeDefaultWidgets();
-            }).catch(() => {});
-            btn.addEventListener('click', (e) => {
-                if (editMode) {
-                    e.preventDefault();
-                    return;
-                }
-                petInput.click();
-            });
-            wrap.appendChild(btn);
-            widgetLayer.appendChild(createWidgetShell('pet', wrap));
-        }
-
         placeDefaultWidgets();
 
         clearInterval(clockTimer);
@@ -2128,6 +2105,92 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (face) face.textContent = formatClock(new Date());
             }, 1000);
         }
+
+        renderRoamPet();
+    }
+
+    async function resolvePetSrc() {
+        const fallback = window.OrbitPet?.DEFAULT || 'cat';
+        if (!state.settings.petChoice) {
+            try {
+                const url = await wallpaperGet(PET_MEDIA_KEY);
+                if (url) {
+                    state.settings.petChoice = 'custom';
+                    saveState();
+                    return url;
+                }
+            } catch { /* ignore */ }
+            state.settings.petChoice = fallback;
+        }
+        const choice = window.OrbitPet?.normalize(state.settings.petChoice) || fallback;
+        if (choice === 'custom') {
+            try {
+                const url = await wallpaperGet(PET_MEDIA_KEY);
+                if (url) return url;
+            } catch { /* ignore */ }
+            state.settings.petChoice = fallback;
+        }
+        return window.OrbitPet.presetSrc(state.settings.petChoice, PET_ASSET_BASE);
+    }
+
+    async function renderRoamPet() {
+        const token = ++petRenderToken;
+        if (!state.settings.widgets?.pet) {
+            window.OrbitPet?.stop();
+            return;
+        }
+        const src = await resolvePetSrc();
+        if (token !== petRenderToken) return;
+        window.OrbitPet?.start({ src, scale: getWidgetScale('pet') });
+    }
+
+    async function renderPetChoices() {
+        const grid = document.getElementById('pet-choice-grid');
+        if (!grid || !window.OrbitPet) return;
+        const choice = window.OrbitPet.normalize(state.settings.petChoice || window.OrbitPet.DEFAULT);
+        grid.replaceChildren();
+        window.OrbitPet.PRESETS.forEach((preset) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'pet-choice';
+            btn.dataset.pet = preset.id;
+            btn.classList.toggle('selected', choice === preset.id);
+            btn.setAttribute('aria-pressed', String(choice === preset.id));
+            btn.setAttribute('aria-label', preset.name);
+            const img = document.createElement('img');
+            img.src = window.OrbitPet.presetSrc(preset.id, PET_ASSET_BASE);
+            img.alt = '';
+            const label = document.createElement('span');
+            label.textContent = preset.name;
+            btn.append(img, label);
+            grid.appendChild(btn);
+        });
+        let customUrl = null;
+        try { customUrl = await wallpaperGet(PET_MEDIA_KEY); } catch { customUrl = null; }
+        if (customUrl) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'pet-choice';
+            btn.dataset.pet = 'custom';
+            btn.classList.toggle('selected', choice === 'custom');
+            btn.setAttribute('aria-pressed', String(choice === 'custom'));
+            btn.setAttribute('aria-label', 'Your uploaded pet');
+            const img = document.createElement('img');
+            img.src = customUrl;
+            img.alt = '';
+            const label = document.createElement('span');
+            label.textContent = 'Yours';
+            btn.append(img, label);
+            grid.appendChild(btn);
+        }
+    }
+
+    function setPetChoice(id) {
+        state.settings.petChoice = window.OrbitPet?.normalize(id) || 'cat';
+        state.settings.widgets.pet = true;
+        saveState();
+        renderRoamPet();
+        syncLayoutModal();
     }
 
     function setPetStatus(message) {
@@ -2159,6 +2222,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const dataUrl = await readFileAsDataUrl(file);
             await wallpaperPut(PET_MEDIA_KEY, dataUrl);
             state.settings.widgets.pet = true;
+            state.settings.petChoice = 'custom';
             saveState();
             renderWidgets();
             syncLayoutModal();
@@ -2170,8 +2234,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function removePet() {
         try { await wallpaperDel(PET_MEDIA_KEY); } catch { /* ignore */ }
+        state.settings.petChoice = window.OrbitPet?.DEFAULT || 'cat';
+        saveState();
         renderWidgets();
-        setPetStatus('Pet removed.');
+        syncLayoutModal();
+        setPetStatus('Back to the default cat.');
     }
 
     function setSidebarOpen(open) {
@@ -2523,6 +2590,11 @@ document.addEventListener('DOMContentLoaded', () => {
             handlePetUpload(file);
         });
         petRemoveBtn.addEventListener('click', removePet);
+        document.getElementById('pet-choice-grid')?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-pet]');
+            if (!btn) return;
+            setPetChoice(btn.dataset.pet);
+        });
         bindWindowResize();
         bindTaskScale();
         bindComposerDock();
