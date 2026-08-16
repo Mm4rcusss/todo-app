@@ -226,16 +226,20 @@ document.addEventListener('DOMContentLoaded', () => {
     let dialogResolver = null;
 
     function finishDialog(value) {
+        confirmYesBtn.textContent = 'Yes';
+        confirmNoBtn.textContent = 'No';
         const resolve = dialogResolver;
         dialogResolver = null;
         resolve?.(value);
     }
 
-    function showConfirm(message) {
+    function showConfirm(message, labels) {
         return new Promise((resolve) => {
             finishDialog(false);
             dialogResolver = resolve;
             confirmMessage.textContent = message;
+            confirmYesBtn.textContent = labels?.yes || 'Yes';
+            confirmNoBtn.textContent = labels?.no || 'No';
             openModal(confirmModal);
             confirmNoBtn.focus();
         });
@@ -258,13 +262,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function hideToast() {
         toastEl.hidden = true;
+        toastUndoBtn.hidden = false;
         undoAction = null;
         clearTimeout(undoTimer);
+    }
+
+    function showNotice(message) {
+        undoAction = null;
+        toastMessage.textContent = message;
+        toastUndoBtn.hidden = true;
+        toastEl.hidden = false;
+        clearTimeout(undoTimer);
+        undoTimer = setTimeout(hideToast, 4000);
     }
 
     function showUndo(message, restore) {
         undoAction = restore;
         toastMessage.textContent = message;
+        toastUndoBtn.hidden = false;
         toastEl.hidden = false;
         clearTimeout(undoTimer);
         undoTimer = setTimeout(hideToast, 5000);
@@ -2188,6 +2203,146 @@ document.addEventListener('DOMContentLoaded', () => {
         return false;
     }
 
+    async function collectBackupMedia() {
+        const wallpapers = {};
+        for (const theme of state.customThemes || []) {
+            try {
+                const dataUrl = await wallpaperGet(theme.id);
+                if (dataUrl) wallpapers[theme.id] = dataUrl;
+            } catch {
+                /* skip missing photo */
+            }
+        }
+        let pet = null;
+        try {
+            pet = await wallpaperGet(PET_MEDIA_KEY);
+        } catch {
+            pet = null;
+        }
+        return { wallpapers, pet };
+    }
+
+    async function createBackupPayload() {
+        const includeMedia = Boolean(document.getElementById('backup-include-media')?.checked);
+        const media = includeMedia ? await collectBackupMedia() : { wallpapers: {}, pet: null };
+        return window.OrbitBackup.build(state, media);
+    }
+
+    function refreshAfterBackup() {
+        checkRecurringLists();
+        renderSidebar();
+        renderCalendar();
+        renderHeader();
+        renderTodos();
+        applyLayout();
+        applyWindowSize();
+        applyTaskScale();
+        applyTheme(currentList()?.theme || DEFAULT_THEME);
+        renderWidgets();
+        syncLayoutModal();
+    }
+
+    async function applyBackup(imported, mode) {
+        const fallback = DEFAULT_THEME;
+        const prepared = {
+            data: window.OrbitBackup.applyThemeFallback(imported.data, imported.media, fallback),
+            media: imported.media
+        };
+        const next = mode === 'merge'
+            ? window.OrbitBackup.merge(state, prepared, { uid, defaultTheme: fallback })
+            : prepared;
+
+        const oldThemeIds = (state.customThemes || []).map((theme) => theme.id);
+        state.lists = next.data.lists;
+        state.tasks = next.data.tasks;
+        state.tags = next.data.tags;
+        state.currentListId = next.data.currentListId;
+        state.customThemes = next.data.customThemes;
+        state.bitsParams = next.data.bitsParams;
+        state.wallpaperAdjust = next.data.wallpaperAdjust;
+        if (mode === 'replace') {
+            state.settings = { ...state.settings, ...(next.data.settings || {}) };
+        }
+        state.settings.usedParticlesDefault = true;
+
+        if (mode === 'replace') {
+            const keep = new Set((state.customThemes || []).map((theme) => theme.id));
+            for (const id of oldThemeIds) {
+                if (!keep.has(id)) {
+                    try { await wallpaperDel(id); } catch { /* ignore */ }
+                }
+            }
+        }
+
+        for (const [id, dataUrl] of Object.entries(next.media?.wallpapers || {})) {
+            try { await wallpaperPut(id, dataUrl); } catch { /* ignore */ }
+        }
+        if (mode === 'replace' && next.media?.pet) {
+            try { await wallpaperPut(PET_MEDIA_KEY, next.media.pet); } catch { /* ignore */ }
+        }
+
+        saveState();
+        loadState();
+        refreshAfterBackup();
+    }
+
+    function bindBackup() {
+        const exportBtn = document.getElementById('backup-export-btn');
+        const shareBtn = document.getElementById('backup-share-btn');
+        const importBtn = document.getElementById('backup-import-btn');
+        const importInput = document.getElementById('backup-import-input');
+        if (!window.OrbitBackup || !exportBtn || !importBtn || !importInput) return;
+
+        const probe = window.OrbitBackup.toFile({ format: 'orbit-backup', version: 1, data: { lists: [], tasks: [] } });
+        if (shareBtn && window.OrbitBackup.canShareFile(probe)) shareBtn.hidden = false;
+
+        const exportBackup = async (shareIt) => {
+            try {
+                const payload = await createBackupPayload();
+                const size = window.OrbitBackup.byteSize(payload);
+                if (size > window.OrbitBackup.WARN_SIZE) {
+                    const ok = await showConfirm('This backup is over 4 MB because of photos. Save it anyway?');
+                    if (!ok) return;
+                }
+                if (shareIt) {
+                    const shared = await window.OrbitBackup.share(payload);
+                    if (shared) {
+                        showNotice('Backup ready to share.');
+                        return;
+                    }
+                }
+                window.OrbitBackup.download(payload);
+                showNotice('Backup downloaded.');
+            } catch (err) {
+                if (err?.name === 'AbortError') return;
+                showNotice(err.message || 'Could not export that backup.');
+            }
+        };
+
+        exportBtn.addEventListener('click', () => exportBackup(false));
+        shareBtn?.addEventListener('click', () => exportBackup(true));
+        importBtn.addEventListener('click', () => importInput.click());
+        importInput.addEventListener('change', async () => {
+            const file = importInput.files?.[0];
+            importInput.value = '';
+            if (!file) return;
+            try {
+                const imported = window.OrbitBackup.parse(await file.text());
+                const proceed = await showConfirm('Import this Orbit backup?');
+                if (!proceed) return;
+                const replace = await showConfirm(
+                    'Replace everything with this backup? Choose Merge to keep yours and add the imported lists.',
+                    { yes: 'Replace', no: 'Merge' }
+                );
+                await applyBackup(imported, replace ? 'replace' : 'merge');
+                closeModal(prefsModal);
+                showNotice(replace ? 'Backup restored.' : 'Backup merged.');
+            } catch (err) {
+                showNotice(err.message || 'Could not import that file.');
+            }
+        });
+    }
+
     function setupEventListeners() {
         addBtn.addEventListener('click', addTodo);
         todoInput.addEventListener('keydown', (e) => {
@@ -2286,6 +2441,7 @@ document.addEventListener('DOMContentLoaded', () => {
         petRemoveBtn.addEventListener('click', removePet);
         bindWindowResize();
         bindTaskScale();
+        bindBackup();
 
         confirmYesBtn.addEventListener('click', () => {
             closeModal(confirmModal);

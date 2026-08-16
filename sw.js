@@ -1,10 +1,11 @@
-const CACHE_NAME = 'tasks-app-v19';
+const CACHE_NAME = 'tasks-app-v20';
 const PRECACHE_URLS = [
     './',
     './index.html',
     './css/style.css',
     './js/app.js',
     './js/effects.js',
+    './js/backup.js',
     './manifest.json',
     './favicon.svg',
     './favicon-32.png',

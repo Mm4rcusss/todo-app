@@ -249,6 +249,15 @@
                 <button type="button" id="pet-remove-btn" class="btn-text">Remove pet</button>
                 <p id="pet-status" class="theme-upload-status" hidden></p>
             </div>
+            <div class="setting-group" id="backup-group">
+                <label>Backup</label>
+                <p class="setting-hint">Save a JSON file you can restore later or send to someone else.</p>
+                <label class="check-row"><input type="checkbox" id="backup-include-media"> Include photos and pet</label>
+                <button type="button" id="backup-export-btn" class="settings-link">Export backup</button>
+                <button type="button" id="backup-share-btn" class="settings-link" hidden>Share backup</button>
+                <button type="button" id="backup-import-btn" class="settings-link">Import backup</button>
+                <input type="file" id="backup-import-input" accept=".json,application/json" hidden>
+            </div>
             <button type="button" id="close-prefs-modal" class="btn-primary">Done</button>
         </div>
     </div>
@@ -317,6 +326,7 @@
     </div>
 
     <script src="js/effects.js"></script>
+    <script src="js/backup.js"></script>
     <script src="js/app.js"></script>
     <script>
         if ('serviceWorker' in navigator) {

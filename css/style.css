@@ -1829,6 +1829,14 @@ body.is-editing .widget-resize {
     background: rgba(255, 255, 255, 0.12);
 }
 
+#backup-group .settings-link {
+    margin-bottom: 0.45rem;
+}
+
+#backup-group .check-row {
+    margin: 0.35rem 0 0.7rem;
+}
+
 .window-size-group .bits-field {
     margin-bottom: 0.85rem;
 }
