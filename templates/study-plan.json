@@ -1,0 +1,45 @@
+{
+  "format": "orbit-backup",
+  "version": 1,
+  "exportedAt": "2026-08-16T09:00:00.000Z",
+  "data": {
+    "lists": [
+      {
+        "id": "tpl_study",
+        "name": "Study plan",
+        "icon": "📚",
+        "theme": "night",
+        "color": "#a8c0ff",
+        "resetFrequency": "range",
+        "reset": { "type": "range", "startDate": "2026-08-16", "endDate": "2026-12-15" }
+      }
+    ],
+    "tasks": [
+      { "id": "tpl_study_t1", "text": "Review lecture notes", "completed": false, "listId": "tpl_study", "date": "2026-08-16", "tags": ["class"], "order": 0 },
+      { "id": "tpl_study_t2", "text": "Practice problems set 3", "completed": false, "listId": "tpl_study", "date": "2026-08-16", "tags": ["class"], "order": 1 },
+      { "id": "tpl_study_t3", "text": "Read chapter 4", "completed": false, "listId": "tpl_study", "date": "2026-08-16", "tags": ["reading"], "order": 2 },
+      { "id": "tpl_study_t4", "text": "Draft essay outline", "completed": false, "listId": "tpl_study", "date": "2026-08-16", "tags": ["writing"], "order": 3 },
+      { "id": "tpl_study_t5", "text": "Quiz yourself for 20 minutes", "completed": false, "listId": "tpl_study", "date": "2026-08-16", "tags": ["class"], "order": 4 }
+    ],
+    "tags": [
+      { "id": "class", "name": "Class", "color": "#a8c0ff" },
+      { "id": "reading", "name": "Reading", "color": "#c4b5fd" },
+      { "id": "writing", "name": "Writing", "color": "#fb7185" }
+    ],
+    "currentListId": "tpl_study",
+    "settings": {
+      "sortBy": "custom",
+      "sidebar": { "side": "left", "mode": "overlay" },
+      "widgets": { "clock": false, "date": true, "pet": false },
+      "widgetPos": {},
+      "widgetViewport": true,
+      "window": { "width": 70, "height": 82 },
+      "taskScale": 1.1,
+      "usedParticlesDefault": true
+    },
+    "customThemes": [],
+    "bitsParams": {},
+    "wallpaperAdjust": {}
+  },
+  "media": { "wallpapers": {}, "pet": null }
+}

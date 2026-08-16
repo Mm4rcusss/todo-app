@@ -56,6 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const petStatus = document.getElementById('pet-status');
     const widgetResetBtn = document.getElementById('widget-reset-btn');
     const PET_MEDIA_KEY = 'widget_pet';
+    const STATE_KEY = 'orbit_mobile_state';
     const backgroundLayer = document.querySelector('.background-layer');
     const confirmModal = document.getElementById('confirm-modal');
     const confirmMessage = document.getElementById('confirm-message');
@@ -2265,7 +2266,10 @@ document.addEventListener('DOMContentLoaded', () => {
         syncLayoutModal();
     }
 
-    async function applyBackup(imported, mode) {
+    async function applyBackup(imported, mode, options = {}) {
+        if (options.snapshot !== false) {
+            window.OrbitBackup.saveRestorePoint(localStorage, STATE_KEY, state);
+        }
         const fallback = DEFAULT_THEME;
         const prepared = {
             data: window.OrbitBackup.applyThemeFallback(imported.data, imported.media, fallback),
@@ -2314,10 +2318,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const shareBtn = document.getElementById('backup-share-btn');
         const importBtn = document.getElementById('backup-import-btn');
         const importInput = document.getElementById('backup-import-input');
+        const restoreBtn = document.getElementById('backup-restore-btn');
+        const restoreHint = document.getElementById('backup-restore-hint');
+        const templateGroup = document.getElementById('template-group');
         if (!window.OrbitBackup || !exportBtn || !importBtn || !importInput) return;
+
+        const syncRestoreButton = () => {
+            const hasPoint = Boolean(window.OrbitBackup.readRestorePoint(localStorage, STATE_KEY));
+            if (restoreBtn) restoreBtn.hidden = !hasPoint;
+            if (restoreHint) restoreHint.hidden = !hasPoint;
+        };
 
         const probe = window.OrbitBackup.toFile({ format: 'orbit-backup', version: 1, data: { lists: [], tasks: [] } });
         if (shareBtn && window.OrbitBackup.canShareFile(probe)) shareBtn.hidden = false;
+        syncRestoreButton();
 
         const exportBackup = async (shareIt) => {
             try {
@@ -2358,10 +2372,55 @@ document.addEventListener('DOMContentLoaded', () => {
                     { yes: 'Replace', no: 'Merge' }
                 );
                 await applyBackup(imported, replace ? 'replace' : 'merge');
+                syncRestoreButton();
                 closeModal(prefsModal);
-                showNotice(replace ? 'Backup restored.' : 'Backup merged.');
+                showNotice(replace ? 'Backup restored. Restore my lists is in Settings.' : 'Backup merged. Restore my lists is in Settings.');
             } catch (err) {
                 showNotice(err.message || 'Could not import that file.');
+            }
+        });
+
+        restoreBtn?.addEventListener('click', async () => {
+            const point = window.OrbitBackup.readRestorePoint(localStorage, STATE_KEY);
+            if (!point) return;
+            const ok = await showConfirm('Restore the lists you had before templates or imports?');
+            if (!ok) return;
+            await applyBackup({ data: point.data, media: { wallpapers: {}, pet: null } }, 'replace', { snapshot: false });
+            window.OrbitBackup.clearRestorePoint(localStorage, STATE_KEY);
+            syncRestoreButton();
+            closeModal(prefsModal);
+            showNotice('Your original lists are back.');
+        });
+
+        templateGroup?.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-template]');
+            if (!btn) return;
+            const id = btn.dataset.template;
+            const base = templateGroup.dataset.templateBase || './templates';
+            try {
+                const response = await fetch(`${base}/${id}.json`);
+                if (!response.ok) throw new Error('Could not load that template.');
+                const imported = window.OrbitBackup.parse(await response.text());
+                const name = imported.data.lists[0]?.name || 'this template';
+                if (state.lists.some((list) => list.name === name)) {
+                    showNotice(`You already have ${name}.`);
+                    return;
+                }
+                const ok = await showConfirm(`Add “${name}” to your lists? Your current tasks will stay.`);
+                if (!ok) return;
+                const before = new Set(state.lists.map((list) => String(list.id)));
+                await applyBackup(imported, 'merge');
+                const added = state.lists.find((list) => !before.has(String(list.id)));
+                if (added) {
+                    state.currentListId = added.id;
+                    saveState();
+                    refreshAfterBackup();
+                }
+                syncRestoreButton();
+                closeModal(prefsModal);
+                showNotice(`${name} added. Restore my lists is in Settings.`);
+            } catch (err) {
+                showNotice(err.message || 'Could not add that template.');
             }
         });
     }
@@ -2382,6 +2441,8 @@ document.addEventListener('DOMContentLoaded', () => {
             syncLayoutModal();
             applyWindowSize();
             applyTaskScale();
+            document.getElementById('backup-restore-btn').hidden = !window.OrbitBackup?.readRestorePoint(localStorage, STATE_KEY);
+            document.getElementById('backup-restore-hint').hidden = document.getElementById('backup-restore-btn').hidden;
             openModal(prefsModal);
         });
         listColorPicker.addEventListener('input', () => setCurrentListColor(listColorPicker.value));

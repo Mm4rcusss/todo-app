@@ -1,0 +1,44 @@
+{
+  "format": "orbit-backup",
+  "version": 1,
+  "exportedAt": "2026-08-16T09:00:00.000Z",
+  "data": {
+    "lists": [
+      {
+        "id": "tpl_morning",
+        "name": "Morning routine",
+        "icon": "☀️",
+        "theme": "rb-particles",
+        "color": "#b19eef",
+        "resetFrequency": "daily",
+        "reset": { "type": "interval", "interval": 1, "unit": "days" }
+      }
+    ],
+    "tasks": [
+      { "id": "tpl_morning_t1", "text": "Make the bed", "completed": false, "listId": "tpl_morning", "date": "2026-08-16", "tags": ["home"], "order": 0 },
+      { "id": "tpl_morning_t2", "text": "Drink a glass of water", "completed": false, "listId": "tpl_morning", "date": "2026-08-16", "tags": ["health"], "order": 1 },
+      { "id": "tpl_morning_t3", "text": "10-minute stretch", "completed": false, "listId": "tpl_morning", "date": "2026-08-16", "tags": ["health"], "order": 2 },
+      { "id": "tpl_morning_t4", "text": "Write three priorities", "completed": false, "listId": "tpl_morning", "date": "2026-08-16", "tags": [], "order": 3 },
+      { "id": "tpl_morning_t5", "text": "No phone until breakfast is done", "completed": false, "listId": "tpl_morning", "date": "2026-08-16", "tags": [], "order": 4 }
+    ],
+    "tags": [
+      { "id": "home", "name": "Home", "color": "#f4a261" },
+      { "id": "health", "name": "Health", "color": "#2ecc71" }
+    ],
+    "currentListId": "tpl_morning",
+    "settings": {
+      "sortBy": "custom",
+      "sidebar": { "side": "left", "mode": "overlay" },
+      "widgets": { "clock": true, "date": true, "pet": false },
+      "widgetPos": {},
+      "widgetViewport": true,
+      "window": { "width": 68, "height": 78 },
+      "taskScale": 1,
+      "usedParticlesDefault": true
+    },
+    "customThemes": [],
+    "bitsParams": {},
+    "wallpaperAdjust": {}
+  },
+  "media": { "wallpapers": {}, "pet": null }
+}

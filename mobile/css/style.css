@@ -1833,6 +1833,10 @@ body.is-editing .widget-resize {
     margin: 0.35rem 0 0.7rem;
 }
 
+#template-group .settings-link {
+    margin-bottom: 0.45rem;
+}
+
 .window-size-group .bits-field {
     margin-bottom: 0.85rem;
 }

@@ -1,0 +1,44 @@
+{
+  "format": "orbit-backup",
+  "version": 1,
+  "exportedAt": "2026-08-16T09:00:00.000Z",
+  "data": {
+    "lists": [
+      {
+        "id": "tpl_weekend",
+        "name": "Weekend reset",
+        "icon": "🌿",
+        "theme": "forest",
+        "color": "#2ecc71",
+        "resetFrequency": "interval",
+        "reset": { "type": "interval", "interval": 1, "unit": "weeks" }
+      }
+    ],
+    "tasks": [
+      { "id": "tpl_weekend_t1", "text": "Laundry and fold", "completed": false, "listId": "tpl_weekend", "date": "2026-08-16", "tags": ["chores"], "order": 0 },
+      { "id": "tpl_weekend_t2", "text": "Grocery run", "completed": false, "listId": "tpl_weekend", "date": "2026-08-16", "tags": ["chores"], "order": 1 },
+      { "id": "tpl_weekend_t3", "text": "Wipe kitchen counters", "completed": false, "listId": "tpl_weekend", "date": "2026-08-16", "tags": ["chores"], "order": 2 },
+      { "id": "tpl_weekend_t4", "text": "Plan next week’s meals", "completed": false, "listId": "tpl_weekend", "date": "2026-08-16", "tags": ["life"], "order": 3 },
+      { "id": "tpl_weekend_t5", "text": "One hour outdoors", "completed": false, "listId": "tpl_weekend", "date": "2026-08-16", "tags": ["life"], "order": 4 }
+    ],
+    "tags": [
+      { "id": "chores", "name": "Chores", "color": "#71b280" },
+      { "id": "life", "name": "Life", "color": "#ffe135" }
+    ],
+    "currentListId": "tpl_weekend",
+    "settings": {
+      "sortBy": "custom",
+      "sidebar": { "side": "right", "mode": "overlay" },
+      "widgets": { "clock": false, "date": true, "pet": false },
+      "widgetPos": {},
+      "widgetViewport": true,
+      "window": { "width": 64, "height": 76 },
+      "taskScale": 1.15,
+      "usedParticlesDefault": true
+    },
+    "customThemes": [],
+    "bitsParams": {},
+    "wallpaperAdjust": {}
+  },
+  "media": { "wallpapers": {}, "pet": null }
+}

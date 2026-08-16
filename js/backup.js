@@ -334,6 +334,47 @@
         return true;
     }
 
+    function restoreStorageKey(stateKey) {
+        return `${stateKey}_restore_point`;
+    }
+
+    function capture(state) {
+        return {
+            lists: clone(state.lists || []),
+            tasks: clone(state.tasks || []),
+            tags: clone(state.tags || []),
+            currentListId: state.currentListId,
+            settings: clone(state.settings || {}),
+            customThemes: clone(state.customThemes || []),
+            bitsParams: clone(state.bitsParams || {}),
+            wallpaperAdjust: clone(state.wallpaperAdjust || {})
+        };
+    }
+
+    function saveRestorePoint(storage, stateKey, state) {
+        const key = restoreStorageKey(stateKey);
+        if (storage.getItem(key)) return false;
+        storage.setItem(key, JSON.stringify({
+            savedAt: new Date().toISOString(),
+            data: capture(state)
+        }));
+        return true;
+    }
+
+    function readRestorePoint(storage, stateKey) {
+        try {
+            const parsed = JSON.parse(storage.getItem(restoreStorageKey(stateKey)));
+            if (!parsed?.data || !Array.isArray(parsed.data.lists)) return null;
+            return parsed;
+        } catch {
+            return null;
+        }
+    }
+
+    function clearRestorePoint(storage, stateKey) {
+        storage.removeItem(restoreStorageKey(stateKey));
+    }
+
     global.OrbitBackup = {
         FORMAT,
         VERSION,
@@ -350,6 +391,10 @@
         toFile,
         download,
         share,
+        capture,
+        saveRestorePoint,
+        readRestorePoint,
+        clearRestorePoint,
         clip
     };
 })(window);

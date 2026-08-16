@@ -1,0 +1,45 @@
+{
+  "format": "orbit-backup",
+  "version": 1,
+  "exportedAt": "2026-08-16T09:00:00.000Z",
+  "data": {
+    "lists": [
+      {
+        "id": "tpl_work",
+        "name": "Work sprint",
+        "icon": "💻",
+        "theme": "ocean",
+        "color": "#00bfff",
+        "resetFrequency": "none",
+        "reset": { "type": "none" }
+      }
+    ],
+    "tasks": [
+      { "id": "tpl_work_t1", "text": "Review pull requests", "completed": false, "listId": "tpl_work", "date": "2026-08-16", "tags": ["urgent"], "order": 0 },
+      { "id": "tpl_work_t2", "text": "Ship the backup import flow", "completed": false, "listId": "tpl_work", "date": "2026-08-16", "tags": ["deep"], "order": 1 },
+      { "id": "tpl_work_t3", "text": "Update changelog", "completed": false, "listId": "tpl_work", "date": "2026-08-16", "tags": [], "order": 2 },
+      { "id": "tpl_work_t4", "text": "Slack standup notes", "completed": true, "listId": "tpl_work", "date": "2026-08-16", "tags": [], "order": 3 },
+      { "id": "tpl_work_t5", "text": "Book 1:1 with design", "completed": false, "listId": "tpl_work", "date": "2026-08-16", "tags": ["people"], "order": 4 }
+    ],
+    "tags": [
+      { "id": "urgent", "name": "Urgent", "color": "#ff4d4d" },
+      { "id": "deep", "name": "Deep work", "color": "#7c3aed" },
+      { "id": "people", "name": "People", "color": "#00bfff" }
+    ],
+    "currentListId": "tpl_work",
+    "settings": {
+      "sortBy": "custom",
+      "sidebar": { "side": "left", "mode": "dock" },
+      "widgets": { "clock": true, "date": false, "pet": false },
+      "widgetPos": {},
+      "widgetViewport": true,
+      "window": { "width": 72, "height": 80 },
+      "taskScale": 1.05,
+      "usedParticlesDefault": true
+    },
+    "customThemes": [],
+    "bitsParams": {},
+    "wallpaperAdjust": {}
+  },
+  "media": { "wallpapers": {}, "pet": null }
+}

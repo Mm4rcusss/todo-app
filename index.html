@@ -84,7 +84,7 @@
             <ul id="todo-list" class="todo-list"></ul>
             <div id="empty-state" class="empty-state" hidden>
                 <p>Nothing here yet</p>
-                <span>Add a task to get started</span>
+                <span>Add a task, or try a template in Settings.</span>
             </div>
 
             <div class="app-footer">
@@ -249,6 +249,15 @@
                 <button type="button" id="pet-remove-btn" class="btn-text">Remove pet</button>
                 <p id="pet-status" class="theme-upload-status" hidden></p>
             </div>
+            <div class="setting-group" id="template-group" data-template-base="./templates">
+                <label>Try a template</label>
+                <p class="setting-hint">Adds a ready-made list. Your tasks stay put.</p>
+                <button type="button" class="settings-link" data-template="morning-routine">Morning routine</button>
+                <button type="button" class="settings-link" data-template="work-sprint">Work sprint</button>
+                <button type="button" class="settings-link" data-template="weekend-reset">Weekend reset</button>
+                <button type="button" class="settings-link" data-template="travel-kit">Travel kit</button>
+                <button type="button" class="settings-link" data-template="study-plan">Study plan</button>
+            </div>
             <div class="setting-group" id="backup-group">
                 <label>Backup</label>
                 <p class="setting-hint">Save a JSON file you can restore later or send to someone else.</p>
@@ -257,6 +266,8 @@
                 <button type="button" id="backup-share-btn" class="settings-link" hidden>Share backup</button>
                 <button type="button" id="backup-import-btn" class="settings-link">Import backup</button>
                 <input type="file" id="backup-import-input" accept=".json,application/json" hidden>
+                <button type="button" id="backup-restore-btn" class="settings-link" hidden>Restore my lists</button>
+                <p id="backup-restore-hint" class="setting-hint" hidden>Go back to what you had before a template or import.</p>
             </div>
             <button type="button" id="close-prefs-modal" class="btn-primary">Done</button>
         </div>

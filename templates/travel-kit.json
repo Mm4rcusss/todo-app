@@ -1,0 +1,45 @@
+{
+  "format": "orbit-backup",
+  "version": 1,
+  "exportedAt": "2026-08-16T09:00:00.000Z",
+  "data": {
+    "lists": [
+      {
+        "id": "tpl_travel",
+        "name": "Travel kit",
+        "icon": "✈️",
+        "theme": "sunset",
+        "color": "#ff7e5f",
+        "resetFrequency": "none",
+        "reset": { "type": "none" }
+      }
+    ],
+    "tasks": [
+      { "id": "tpl_travel_t1", "text": "Passport and ID", "completed": false, "listId": "tpl_travel", "date": "2026-08-16", "tags": ["docs"], "order": 0 },
+      { "id": "tpl_travel_t2", "text": "Charger and power bank", "completed": false, "listId": "tpl_travel", "date": "2026-08-16", "tags": ["gear"], "order": 1 },
+      { "id": "tpl_travel_t3", "text": "Headphones", "completed": false, "listId": "tpl_travel", "date": "2026-08-16", "tags": ["gear"], "order": 2 },
+      { "id": "tpl_travel_t4", "text": "Medications", "completed": false, "listId": "tpl_travel", "date": "2026-08-16", "tags": ["docs"], "order": 3 },
+      { "id": "tpl_travel_t5", "text": "Comfortable walking shoes", "completed": false, "listId": "tpl_travel", "date": "2026-08-16", "tags": [], "order": 4 },
+      { "id": "tpl_travel_t6", "text": "Download offline maps", "completed": true, "listId": "tpl_travel", "date": "2026-08-16", "tags": ["gear"], "order": 5 }
+    ],
+    "tags": [
+      { "id": "docs", "name": "Documents", "color": "#ff7e5f" },
+      { "id": "gear", "name": "Gear", "color": "#00c6ff" }
+    ],
+    "currentListId": "tpl_travel",
+    "settings": {
+      "sortBy": "custom",
+      "sidebar": { "side": "left", "mode": "overlay" },
+      "widgets": { "clock": false, "date": false, "pet": false },
+      "widgetPos": {},
+      "widgetViewport": true,
+      "window": { "width": 68, "height": 78 },
+      "taskScale": 1.2,
+      "usedParticlesDefault": true
+    },
+    "customThemes": [],
+    "bitsParams": {},
+    "wallpaperAdjust": {}
+  },
+  "media": { "wallpapers": {}, "pet": null }
+}
