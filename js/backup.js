@@ -5,6 +5,7 @@
     const PET_KEY = 'widget_pet';
     const BUILTIN_THEMES = [
         'default', 'ocean', 'forest', 'sunset', 'night', 'aurora', 'candy',
+        'grass', 'sunny', 'beach', 'sky', 'meadow', 'blossom', 'peach', 'mint', 'lagoon',
         'nature', 'galaxy', 'dust', 'nebula', 'webb',
         'rb-aurora', 'rb-particles', 'rb-waves', 'rb-silk', 'rb-orbs',
         'rb-lightning', 'rb-grid', 'rb-plasma'
