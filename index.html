@@ -239,16 +239,19 @@
                     <input type="range" id="widget-pet-scale" min="70" max="220" step="5" value="100">
                 </div>
                 <button type="button" id="widget-reset-btn" class="btn-text">Reset widget layout</button>
-                <p class="setting-hint desktop-only">Turn on edit mode to drag clock and date. Tap or drag the pet — it walks the screen and only catches taps on itself.</p>
+                <p class="setting-hint desktop-only">Turn on edit mode to drag clock and date. Tap a pet type to add more; tap or drag any pet on the screen.</p>
             </div>
             <div class="setting-group" id="pet-upload-group" hidden>
-                <label>Choose a pet</label>
+                <label>Add pets</label>
+                <p class="setting-hint">Tap a type to add another. Mix as many as you like.</p>
                 <div class="pet-choice-grid" id="pet-choice-grid"></div>
+                <div class="pet-roster" id="pet-roster" hidden></div>
                 <label class="theme-upload">
                     <input type="file" id="pet-input" accept="image/gif,image/webp,image/png,image/jpeg" hidden>
                     <span>Upload your own GIF</span>
                 </label>
-                <button type="button" id="pet-remove-btn" class="btn-text">Remove uploaded pet</button>
+                <button type="button" id="pet-remove-btn" class="btn-text">Remove uploaded GIF</button>
+                <button type="button" id="pet-clear-btn" class="btn-text" hidden>Clear all pets</button>
                 <p id="pet-status" class="theme-upload-status" hidden></p>
             </div>
             <div class="setting-group" id="template-group" data-template-base="./templates">

@@ -305,6 +305,7 @@ document.addEventListener('DOMContentLoaded', () => {
             sidebar: { side: 'left', mode: 'dock' },
             widgets: { clock: false, date: false, pet: false },
             petChoice: 'cat',
+            pets: [],
             widgetPos: {},
             widgetViewport: true,
             window: { width: 68, height: 78 },
@@ -366,6 +367,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     ? window.OrbitPet.normalize(state.settings.petChoice)
                     : String(state.settings.petChoice);
             }
+            if (!Array.isArray(state.settings.pets)) state.settings.pets = [];
+            migratePets();
             if (!state.settings.widgetPos || typeof state.settings.widgetPos !== 'object') state.settings.widgetPos = {};
             if (!state.settings.widgetViewport) {
                 state.settings.widgetViewport = true;
@@ -1801,6 +1804,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setWidgetEnabled(name, enabled) {
         state.settings.widgets[name] = Boolean(enabled);
+        if (name === 'pet' && enabled) ensureDefaultPet();
         saveState();
         renderWidgets();
         syncLayoutModal();
@@ -2088,88 +2092,159 @@ document.addEventListener('DOMContentLoaded', () => {
         renderRoamPet();
     }
 
-    async function resolvePetSrc() {
-        const fallback = window.OrbitPet?.DEFAULT || 'cat';
-        if (!state.settings.petChoice) {
-            try {
-                const url = await wallpaperGet(PET_MEDIA_KEY);
-                if (url) {
-                    state.settings.petChoice = 'custom';
-                    saveState();
-                    return url;
-                }
-            } catch { /* ignore */ }
-            state.settings.petChoice = fallback;
+    function migratePets() {
+        if (!Array.isArray(state.settings.pets)) state.settings.pets = [];
+        state.settings.pets = state.settings.pets
+            .map((pet) => {
+                if (!pet || typeof pet !== 'object') return null;
+                const id = String(pet.id || '').slice(0, 80);
+                if (!id) return null;
+                return {
+                    id,
+                    type: window.OrbitPet ? window.OrbitPet.normalize(pet.type) : (pet.type || 'cat')
+                };
+            })
+            .filter(Boolean)
+            .slice(0, window.OrbitPet?.MAX || 32);
+        if (!state.settings.pets.length && state.settings.widgets?.pet) {
+            const type = state.settings.petChoice
+                ? (window.OrbitPet ? window.OrbitPet.normalize(state.settings.petChoice) : 'cat')
+                : (window.OrbitPet?.DEFAULT || 'cat');
+            state.settings.pets.push({ id: uid('pet-'), type });
         }
-        const choice = window.OrbitPet?.normalize(state.settings.petChoice) || fallback;
-        if (choice === 'custom') {
+    }
+
+    function ensureDefaultPet() {
+        migratePets();
+        if (!state.settings.pets.length) {
+            state.settings.pets.push({ id: uid('pet-'), type: window.OrbitPet?.DEFAULT || 'cat' });
+        }
+    }
+
+    async function srcForType(type) {
+        const normalized = window.OrbitPet?.normalize(type) || 'cat';
+        if (normalized === 'custom') {
             try {
                 const url = await wallpaperGet(PET_MEDIA_KEY);
                 if (url) return url;
             } catch { /* ignore */ }
-            state.settings.petChoice = fallback;
+            return window.OrbitPet.presetSrc('cat', PET_ASSET_BASE);
         }
-        return window.OrbitPet.presetSrc(state.settings.petChoice, PET_ASSET_BASE);
+        return window.OrbitPet.presetSrc(normalized, PET_ASSET_BASE);
     }
 
     async function renderRoamPet() {
         const token = ++petRenderToken;
-        if (!state.settings.widgets?.pet) {
+        migratePets();
+        if (!state.settings.widgets?.pet || !state.settings.pets.length) {
             window.OrbitPet?.stop();
             return;
         }
-        const src = await resolvePetSrc();
-        if (token !== petRenderToken) return;
-        window.OrbitPet?.start({ src, scale: getWidgetScale('pet') });
+        const items = [];
+        for (const pet of state.settings.pets) {
+            items.push({ id: pet.id, src: await srcForType(pet.type) });
+            if (token !== petRenderToken) return;
+        }
+        window.OrbitPet?.sync(items, { scale: getWidgetScale('pet') });
     }
 
     async function renderPetChoices() {
         const grid = document.getElementById('pet-choice-grid');
+        const roster = document.getElementById('pet-roster');
+        const clearBtn = document.getElementById('pet-clear-btn');
         if (!grid || !window.OrbitPet) return;
-        const choice = window.OrbitPet.normalize(state.settings.petChoice || window.OrbitPet.DEFAULT);
+        migratePets();
+        const counts = {};
+        state.settings.pets.forEach((pet) => {
+            counts[pet.type] = (counts[pet.type] || 0) + 1;
+        });
+        let customUrl = null;
+        try { customUrl = await wallpaperGet(PET_MEDIA_KEY); } catch { customUrl = null; }
+
         grid.replaceChildren();
-        window.OrbitPet.PRESETS.forEach((preset) => {
+        const types = [...window.OrbitPet.PRESETS];
+        if (customUrl) types.push({ id: 'custom', name: 'Yours' });
+        types.forEach((preset) => {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'pet-choice';
-            btn.dataset.pet = preset.id;
-            btn.classList.toggle('selected', choice === preset.id);
-            btn.setAttribute('aria-pressed', String(choice === preset.id));
-            btn.setAttribute('aria-label', preset.name);
+            btn.dataset.addPet = preset.id;
+            const n = counts[preset.id] || 0;
+            btn.classList.toggle('selected', n > 0);
+            btn.setAttribute('aria-label', `Add ${preset.name}`);
             const img = document.createElement('img');
-            img.src = window.OrbitPet.presetSrc(preset.id, PET_ASSET_BASE);
+            img.src = preset.id === 'custom' ? customUrl : window.OrbitPet.presetSrc(preset.id, PET_ASSET_BASE);
             img.alt = '';
             const label = document.createElement('span');
             label.textContent = preset.name;
             btn.append(img, label);
+            if (n) {
+                const badge = document.createElement('span');
+                badge.className = 'pet-choice-count';
+                badge.textContent = String(n);
+                btn.appendChild(badge);
+            }
             grid.appendChild(btn);
         });
-        let customUrl = null;
-        try { customUrl = await wallpaperGet(PET_MEDIA_KEY); } catch { customUrl = null; }
-        if (customUrl) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'pet-choice';
-            btn.dataset.pet = 'custom';
-            btn.classList.toggle('selected', choice === 'custom');
-            btn.setAttribute('aria-pressed', String(choice === 'custom'));
-            btn.setAttribute('aria-label', 'Your uploaded pet');
-            const img = document.createElement('img');
-            img.src = customUrl;
-            img.alt = '';
-            const label = document.createElement('span');
-            label.textContent = 'Yours';
-            btn.append(img, label);
-            grid.appendChild(btn);
+
+        if (roster) {
+            roster.replaceChildren();
+            roster.hidden = !state.settings.pets.length;
+            state.settings.pets.forEach((pet) => {
+                const chip = document.createElement('div');
+                chip.className = 'pet-chip';
+                const img = document.createElement('img');
+                img.alt = '';
+                img.src = pet.type === 'custom' && customUrl
+                    ? customUrl
+                    : window.OrbitPet.presetSrc(pet.type === 'custom' ? 'cat' : pet.type, PET_ASSET_BASE);
+                const name = document.createElement('span');
+                name.textContent = window.OrbitPet.presetName(pet.type);
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.className = 'pet-chip-remove';
+                remove.dataset.removePet = pet.id;
+                remove.setAttribute('aria-label', `Remove ${window.OrbitPet.presetName(pet.type)}`);
+                remove.textContent = '×';
+                chip.append(img, name, remove);
+                roster.appendChild(chip);
+            });
         }
+        if (clearBtn) clearBtn.hidden = !state.settings.pets.length;
     }
 
-    function setPetChoice(id) {
-        state.settings.petChoice = window.OrbitPet?.normalize(id) || 'cat';
+    function addPet(type) {
+        migratePets();
+        const max = window.OrbitPet?.MAX || 32;
+        if (state.settings.pets.length >= max) {
+            setPetStatus(`That's the max (${max}).`);
+            return;
+        }
+        state.settings.pets.push({
+            id: uid('pet-'),
+            type: window.OrbitPet?.normalize(type) || 'cat'
+        });
         state.settings.widgets.pet = true;
         saveState();
         renderRoamPet();
         syncLayoutModal();
+        setPetStatus('');
+    }
+
+    function removePetById(id) {
+        migratePets();
+        state.settings.pets = state.settings.pets.filter((pet) => pet.id !== id);
+        saveState();
+        renderRoamPet();
+        syncLayoutModal();
+    }
+
+    function clearPets() {
+        state.settings.pets = [];
+        saveState();
+        renderRoamPet();
+        syncLayoutModal();
+        setPetStatus('All pets cleared.');
     }
 
     function setPetStatus(message) {
@@ -2201,7 +2276,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const dataUrl = await readFileAsDataUrl(file);
             await wallpaperPut(PET_MEDIA_KEY, dataUrl);
             state.settings.widgets.pet = true;
-            state.settings.petChoice = 'custom';
+            migratePets();
+            if (state.settings.pets.length < (window.OrbitPet?.MAX || 32)) {
+                state.settings.pets.push({ id: uid('pet-'), type: 'custom' });
+            }
             saveState();
             renderWidgets();
             syncLayoutModal();
@@ -2213,11 +2291,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function removePet() {
         try { await wallpaperDel(PET_MEDIA_KEY); } catch { /* ignore */ }
-        state.settings.petChoice = window.OrbitPet?.DEFAULT || 'cat';
+        migratePets();
+        state.settings.pets = state.settings.pets.filter((pet) => pet.type !== 'custom');
         saveState();
         renderWidgets();
         syncLayoutModal();
-        setPetStatus('Back to the default cat.');
+        setPetStatus('Uploaded GIF removed.');
     }
 
     function setSidebarOpen(open) {
@@ -2568,10 +2647,16 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         petRemoveBtn.addEventListener('click', removePet);
         document.getElementById('pet-choice-grid')?.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-pet]');
+            const btn = e.target.closest('[data-add-pet]');
             if (!btn) return;
-            setPetChoice(btn.dataset.pet);
+            addPet(btn.dataset.addPet);
         });
+        document.getElementById('pet-roster')?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-remove-pet]');
+            if (!btn) return;
+            removePetById(btn.dataset.removePet);
+        });
+        document.getElementById('pet-clear-btn')?.addEventListener('click', clearPets);
         bindWindowResize();
         bindTaskScale();
         bindBackup();
