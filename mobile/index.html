@@ -6,16 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Orbit</title>
 
-    <meta name="description" content="A liquid glass to-do app with particles, lists, and widgets">
+    <meta name="description" content="Orbit — a liquid glass to-do app for iPhone">
     <meta name="theme-color" content="#b19eef">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Orbit">
     <link rel="manifest" href="./manifest.json">
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-    <link rel="icon" href="./favicon-32.png" type="image/png" sizes="32x32">
-    <link rel="apple-touch-icon" href="./icon-192.png">
+    <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="../favicon-32.png" type="image/png" sizes="32x32">
+    <link rel="apple-touch-icon" href="../icon-192.png">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,10 +23,10 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 
-<body>
+<body class="orbit-mobile">
     <div class="background-layer" id="background-layer" aria-hidden="true"></div>
 
-    <div class="app-wrapper sidebar-mode-dock">
+    <div class="app-wrapper sidebar-mode-overlay">
         <button type="button" id="menu-btn" class="btn-icon menu-btn" aria-label="Open lists" aria-expanded="false" aria-controls="sidebar">
             <svg class="icon-dots" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="1" />
@@ -42,6 +42,7 @@
                 <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.07 7.07 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.6.24-1.15.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64L4.86 10.7c-.04.31-.06.63-.06.94s.02.63.06.94L2.83 14.16a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.48.39 1.03.7 1.63.94l.36 2.54c.05.24.26.42.49.42h3.8c.24 0 .44-.18.49-.42l.36-2.54c.6-.24 1.15-.55 1.63-.94l2.39.96c.24.1.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/>
             </svg>
         </button>
+
         <aside class="sidebar" id="sidebar" aria-label="Lists and calendar">
             <div class="sidebar-header">
                 <h2>Lists</h2>
@@ -53,7 +54,6 @@
             </div>
             <ul class="lists-nav" id="lists-nav"></ul>
             <button type="button" id="add-list-btn" class="btn-text">+ New List</button>
-
             <div class="sidebar-footer">
                 <div class="calendar-mini" id="calendar-mini"></div>
             </div>
@@ -63,6 +63,7 @@
         <main class="app-container">
             <header class="app-header">
                 <div class="header-content">
+                    <div id="widget-layer" class="widget-layer" hidden></div>
                     <h1 id="list-title">My Tasks</h1>
                     <div class="header-meta">
                         <p class="subtitle" id="current-date">Today</p>
@@ -70,45 +71,26 @@
                 </div>
             </header>
 
-            <div class="input-group">
-                <input type="text" id="todo-input" placeholder="What's on your mind?" autocomplete="off" maxlength="240" aria-label="New task">
-                <button type="button" id="add-btn" class="btn-primary" aria-label="Add task">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                            stroke-linejoin="round" />
-                    </svg>
-                </button>
-            </div>
-
             <ul id="todo-list" class="todo-list"></ul>
             <div id="empty-state" class="empty-state" hidden>
                 <p>Nothing here yet</p>
-                <span>Add a task to get started</span>
+                <span>Tap below to add your first task</span>
             </div>
 
             <div class="app-footer">
                 <span id="items-left">0 items left</span>
-                <a class="btn-text" href="./mobile/">Phone view</a>
-                <button type="button" id="clear-completed" class="btn-text">Clear Completed</button>
+                <button type="button" id="clear-completed" class="btn-text">Clear done</button>
+            </div>
+
+            <div class="input-group composer">
+                <input type="text" id="todo-input" placeholder="Add a task" autocomplete="off" maxlength="240" enterkeyhint="done" aria-label="New task">
+                <button type="button" id="add-btn" class="btn-primary" aria-label="Add task">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                </button>
             </div>
         </main>
-        <div id="resize-handles" class="resize-handles" hidden>
-            <span class="resize-handle n" data-dir="n"></span>
-            <span class="resize-handle e" data-dir="e"></span>
-            <span class="resize-handle s" data-dir="s"></span>
-            <span class="resize-handle w" data-dir="w"></span>
-            <span class="resize-handle ne" data-dir="ne"></span>
-            <span class="resize-handle se" data-dir="se"></span>
-            <span class="resize-handle sw" data-dir="sw"></span>
-            <span class="resize-handle nw" data-dir="nw"></span>
-        </div>
-    </div>
-
-    <div id="widget-layer" class="widget-layer" hidden></div>
-
-    <div id="edit-bar" class="edit-bar" hidden>
-        <span>Edit mode</span>
-        <button type="button" id="edit-done-btn">Exit</button>
     </div>
 
     <div id="toast" class="toast" hidden>
@@ -118,7 +100,7 @@
 
     <div id="theme-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="theme-modal-title">
         <div class="modal-content">
-            <h3 id="theme-modal-title">Choose Background</h3>
+            <h3 id="theme-modal-title">Background</h3>
             <p class="theme-section-label">Photos & gradients</p>
             <div class="theme-grid" id="theme-grid"></div>
             <p class="theme-section-label">React Bits</p>
@@ -153,18 +135,18 @@
 
     <div id="tag-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="tag-modal-title">
         <div class="modal-content">
-            <h3 id="tag-modal-title">Create New Tag</h3>
+            <h3 id="tag-modal-title">Create tag</h3>
             <div class="setting-group">
-                <label for="new-tag-name">Tag Name</label>
+                <label for="new-tag-name">Tag name</label>
                 <input type="text" id="new-tag-name" placeholder="e.g., Urgent" class="modal-input" maxlength="24">
             </div>
             <div class="setting-group">
-                <label>Tag Color</label>
+                <label>Tag color</label>
                 <div class="color-palette" id="tag-color-palette"></div>
             </div>
             <div class="modal-actions">
                 <button type="button" id="cancel-tag-btn" class="btn-secondary">Cancel</button>
-                <button type="button" id="save-tag-btn" class="btn-primary">Create Tag</button>
+                <button type="button" id="save-tag-btn" class="btn-primary">Create</button>
             </div>
         </div>
     </div>
@@ -173,11 +155,10 @@
         <div class="modal-content">
             <h3 id="prefs-modal-title">Settings</h3>
             <div class="setting-group">
-                <button type="button" id="enter-edit-btn" class="settings-link desktop-only">Enter edit mode</button>
                 <button type="button" id="open-theme-btn" class="settings-link">Customize background</button>
-                <a class="settings-link" href="./mobile/">Switch to phone view</a>
+                <a class="settings-link" href="../">Switch to website</a>
             </div>
-            <div class="setting-group phone-only" id="task-scale-group">
+            <div class="setting-group" id="task-scale-group">
                 <label>Task size</label>
                 <div class="scale-row">
                     <button type="button" id="task-scale-down" aria-label="Smaller tasks">−</button>
@@ -185,25 +166,12 @@
                     <button type="button" id="task-scale-up" aria-label="Larger tasks">+</button>
                 </div>
                 <button type="button" id="task-scale-reset" class="btn-text">Reset size</button>
-                <p class="setting-hint">Zoom task rows in or out, like Cmd + and Cmd −. You can also pinch the list with two fingers.</p>
+                <p class="setting-hint">Pinch the list, or use + and −, to make rows easier to tap.</p>
             </div>
             <div class="setting-group">
                 <label for="prefs-list-color">List color</label>
                 <p class="setting-hint" id="prefs-list-color-name"></p>
                 <input type="color" id="prefs-list-color">
-            </div>
-            <div class="setting-group window-size-group desktop-only">
-                <label>Window size</label>
-                <div class="bits-field">
-                    <label for="window-width">Width <span id="window-width-value">68%</span></label>
-                    <input type="range" id="window-width" min="28" max="96" step="1" value="68">
-                </div>
-                <div class="bits-field">
-                    <label for="window-height">Height <span id="window-height-value">78%</span></label>
-                    <input type="range" id="window-height" min="40" max="94" step="1" value="78">
-                </div>
-                <button type="button" id="window-reset-btn" class="btn-text">Reset size</button>
-                <p class="setting-hint">On phones the app stays full screen. In edit mode you can also drag the window edges.</p>
             </div>
             <div class="setting-group">
                 <label>Lists menu</label>
@@ -213,32 +181,11 @@
                 </div>
             </div>
             <div class="setting-group">
-                <label>When the menu is open</label>
-                <div class="choice-row" id="sidebar-mode-choices">
-                    <button type="button" data-mode="dock">Push tasks aside</button>
-                    <button type="button" data-mode="overlay">Float over tasks</button>
-                </div>
-                <p class="setting-hint">On phones the menu still floats so your tasks stay readable.</p>
-            </div>
-            <div class="setting-group">
                 <label>Widgets</label>
                 <label class="check-row"><input type="checkbox" id="widget-clock"> Clock</label>
-                <div class="bits-field widget-scale-field" data-widget-scale="clock" hidden>
-                    <label for="widget-clock-scale">Clock size <span id="widget-clock-scale-value">100%</span></label>
-                    <input type="range" id="widget-clock-scale" min="70" max="220" step="5" value="100">
-                </div>
                 <label class="check-row"><input type="checkbox" id="widget-date"> Date</label>
-                <div class="bits-field widget-scale-field" data-widget-scale="date" hidden>
-                    <label for="widget-date-scale">Date size <span id="widget-date-scale-value">100%</span></label>
-                    <input type="range" id="widget-date-scale" min="70" max="220" step="5" value="100">
-                </div>
                 <label class="check-row"><input type="checkbox" id="widget-pet"> GIF pet</label>
-                <div class="bits-field widget-scale-field" data-widget-scale="pet" hidden>
-                    <label for="widget-pet-scale">Pet size <span id="widget-pet-scale-value">100%</span></label>
-                    <input type="range" id="widget-pet-scale" min="70" max="220" step="5" value="100">
-                </div>
-                <button type="button" id="widget-reset-btn" class="btn-text">Reset widget layout</button>
-                <p class="setting-hint desktop-only">Turn on edit mode to drag widgets anywhere on the screen, including outside the window. Drag a corner to resize.</p>
+                <p class="setting-hint">They sit in a row under the list name.</p>
             </div>
             <div class="setting-group" id="pet-upload-group" hidden>
                 <label class="theme-upload">
@@ -254,9 +201,9 @@
 
     <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
         <div class="modal-content">
-            <h3 id="settings-modal-title">List Settings</h3>
+            <h3 id="settings-modal-title">List settings</h3>
             <div class="setting-group">
-                <label for="list-reset-select">Reset Frequency</label>
+                <label for="list-reset-select">Reset frequency</label>
                 <select id="list-reset-select">
                     <option value="none">Does not reset</option>
                     <option value="interval">Repeats on a schedule</option>
@@ -295,7 +242,7 @@
 
     <div id="confirm-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <div class="modal-content">
-            <h3 id="confirm-title">Confirm Action</h3>
+            <h3 id="confirm-title">Confirm</h3>
             <p id="confirm-message"></p>
             <div class="modal-actions">
                 <button type="button" id="confirm-no-btn" class="btn-secondary">No</button>
@@ -306,7 +253,7 @@
 
     <div id="input-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="input-title">
         <div class="modal-content">
-            <h3 id="input-title">Enter Information</h3>
+            <h3 id="input-title">Enter information</h3>
             <input type="text" id="input-field" class="modal-input" placeholder="" maxlength="60">
             <div class="modal-actions">
                 <button type="button" id="input-cancel-btn" class="btn-secondary">Cancel</button>
@@ -315,15 +262,38 @@
         </div>
     </div>
 
+    <!-- Stubs so the shared app logic does not crash. Hidden on purpose. -->
+    <div hidden>
+        <button type="button" id="enter-edit-btn"></button>
+        <button type="button" id="edit-done-btn"></button>
+        <div id="edit-bar" hidden></div>
+        <div id="resize-handles" hidden></div>
+        <input id="window-width" type="range" value="68">
+        <input id="window-height" type="range" value="78">
+        <span id="window-width-value"></span>
+        <span id="window-height-value"></span>
+        <button type="button" id="window-reset-btn"></button>
+        <div id="sidebar-mode-choices">
+            <button type="button" data-mode="overlay"></button>
+            <button type="button" data-mode="dock"></button>
+        </div>
+        <div data-widget-scale="clock" hidden>
+            <input id="widget-clock-scale" type="range" value="100">
+            <span id="widget-clock-scale-value"></span>
+        </div>
+        <div data-widget-scale="date" hidden>
+            <input id="widget-date-scale" type="range" value="100">
+            <span id="widget-date-scale-value"></span>
+        </div>
+        <div data-widget-scale="pet" hidden>
+            <input id="widget-pet-scale" type="range" value="100">
+            <span id="widget-pet-scale-value"></span>
+        </div>
+        <button type="button" id="widget-reset-btn"></button>
+    </div>
+
     <script src="js/effects.js"></script>
     <script src="js/app.js"></script>
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js').catch(() => {});
-            });
-        }
-    </script>
 </body>
 
 </html>

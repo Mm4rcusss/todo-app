@@ -2009,3 +2009,231 @@ body.is-editing .widget-float:nth-child(2n) .widget {
         animation: none;
     }
 }
+
+/* ===== Orbit mobile v1 ===== */
+html,
+body.orbit-mobile {
+    height: 100%;
+    height: 100dvh;
+}
+
+body.orbit-mobile {
+    align-items: stretch;
+    justify-content: stretch;
+    overflow: hidden;
+}
+
+body.orbit-mobile .app-wrapper {
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    flex-direction: column;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: 0;
+}
+
+body.orbit-mobile .app-wrapper.sidebar-mode-dock .sidebar-overlay,
+body.orbit-mobile .sidebar-overlay {
+    display: block;
+}
+
+body.orbit-mobile .app-wrapper.sidebar-mode-dock .sidebar,
+body.orbit-mobile .app-wrapper.sidebar-right.sidebar-mode-dock .sidebar,
+body.orbit-mobile .sidebar {
+    position: absolute;
+    order: unset;
+    margin: 0;
+    width: min(86vw, 320px);
+    height: 100%;
+    transform: translateX(-105%);
+    pointer-events: none;
+    padding: calc(env(safe-area-inset-top) + 0.85rem) 1.1rem calc(1.25rem + env(safe-area-inset-bottom));
+    background: rgba(10, 10, 10, 0.96);
+}
+
+body.orbit-mobile .app-wrapper.sidebar-mode-dock .sidebar.is-open,
+body.orbit-mobile .app-wrapper.sidebar-right.sidebar-mode-dock .sidebar.is-open,
+body.orbit-mobile .sidebar.is-open {
+    transform: translateX(0);
+    pointer-events: auto;
+    margin: 0;
+}
+
+body.orbit-mobile .app-wrapper.sidebar-right .sidebar,
+body.orbit-mobile .app-wrapper.sidebar-right.sidebar-mode-dock .sidebar {
+    left: auto;
+    right: 0;
+    transform: translateX(105%);
+}
+
+body.orbit-mobile .app-wrapper.sidebar-right .sidebar.is-open,
+body.orbit-mobile .app-wrapper.sidebar-right.sidebar-mode-dock .sidebar.is-open {
+    transform: translateX(0);
+}
+
+body.orbit-mobile .app-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    padding: 3.35rem 1.05rem 0;
+    gap: 0.85rem;
+    overscroll-behavior: contain;
+}
+
+body.orbit-mobile .header-content {
+    padding: 0 2.8rem;
+}
+
+body.orbit-mobile .header-title-input,
+body.orbit-mobile #list-title {
+    font-size: 1.7rem;
+}
+
+body.orbit-mobile .widget-layer {
+    position: relative;
+    inset: auto;
+    z-index: 1;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.45rem;
+    pointer-events: auto;
+    margin-bottom: 0.15rem;
+}
+
+body.orbit-mobile .widget-layer[hidden] {
+    display: none;
+}
+
+body.orbit-mobile .widget-float {
+    position: relative;
+    left: auto !important;
+    top: auto !important;
+    visibility: visible !important;
+    touch-action: manipulation;
+}
+
+body.orbit-mobile .widget-resize {
+    display: none !important;
+}
+
+body.orbit-mobile .widget {
+    min-height: 28px;
+    padding: 0.28rem 0.7rem;
+}
+
+body.orbit-mobile .widget-pet .pet-frame {
+    width: 36px;
+    height: 36px;
+}
+
+body.orbit-mobile #todo-list {
+    gap: calc(0.85rem * var(--task-scale, 1));
+    padding-bottom: 0.5rem;
+}
+
+body.orbit-mobile .todo-item {
+    padding: calc(0.95rem * var(--task-scale, 1)) calc(0.9rem * var(--task-scale, 1));
+    touch-action: pan-y;
+}
+
+body.orbit-mobile .todo-item:hover {
+    transform: none;
+}
+
+body.orbit-mobile .checkbox {
+    width: calc(24px * var(--task-scale, 1));
+    height: calc(24px * var(--task-scale, 1));
+}
+
+body.orbit-mobile .todo-actions,
+body.orbit-mobile .drag-handle {
+    min-width: 36px;
+    min-height: 36px;
+}
+
+body.orbit-mobile .drag-handle svg,
+body.orbit-mobile .tag-btn svg,
+body.orbit-mobile .settings-list-btn svg {
+    display: block;
+}
+
+body.orbit-mobile .composer {
+    position: sticky;
+    bottom: 0;
+    z-index: 8;
+    margin-top: auto;
+    padding: 0.65rem 0 calc(0.7rem + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.55) 28%, rgba(0, 0, 0, 0.72));
+    gap: 0.65rem;
+}
+
+body.orbit-mobile #todo-input {
+    font-size: 16px;
+    padding: 0.95rem 1.05rem;
+    border-radius: 16px;
+    min-height: 48px;
+}
+
+body.orbit-mobile #add-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+}
+
+body.orbit-mobile .app-footer {
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+body.orbit-mobile .modal-content {
+    width: calc(100% - 1.25rem);
+    max-height: min(88dvh, 720px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+}
+
+body.orbit-mobile .modal-content > .btn-primary:last-child {
+    position: sticky;
+    bottom: 0;
+    margin-top: 0.75rem;
+    z-index: 2;
+}
+
+body.orbit-mobile .phone-only {
+    display: block !important;
+}
+
+body.orbit-mobile .icon-btn-svg {
+    width: 18px;
+    height: 18px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+body.orbit-mobile .drag-handle svg {
+    width: 14px;
+    height: 18px;
+}
+
+body.orbit-mobile .drag-handle svg circle {
+    fill: currentColor;
+    stroke: none;
+}
+
+body.orbit-mobile .todo-input-edit,
+body.orbit-mobile .modal-input,
+body.orbit-mobile .setting-group select,
+body.orbit-mobile .header-title-input {
+    font-size: 16px;
+}

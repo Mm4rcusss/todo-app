@@ -312,15 +312,13 @@ document.addEventListener('DOMContentLoaded', () => {
         applyTaskScale();
         applyTheme(list?.theme || DEFAULT_THEME);
         renderWidgets();
-        window.BitsFX?.initUI({ addBtn });
-        if (state.settings.sidebar.mode === 'dock' && window.matchMedia('(min-width: 769px)').matches) {
-            setSidebarOpen(true);
-        }
+        window.BitsFX?.initUI({ addBtn: null });
+        setSidebarOpen(false);
         if (!window.matchMedia('(pointer: coarse)').matches) todoInput.focus();
     }
 
     function loadState() {
-        const raw = localStorage.getItem('nanobanana_state');
+        const raw = localStorage.getItem('orbit_mobile_state');
         if (!raw) return;
 
         try {
@@ -405,7 +403,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function saveState() {
         try {
-            localStorage.setItem('nanobanana_state', JSON.stringify(state));
+            localStorage.setItem('orbit_mobile_state', JSON.stringify(state));
         } catch (err) {
             console.warn('Could not save tasks.', err);
         }
@@ -426,7 +424,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         if (changed) {
-            localStorage.setItem('nanobanana_last_run', today);
+            localStorage.setItem('orbit_mobile_last_run', today);
             saveState();
         }
     }
@@ -438,7 +436,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function migrateOldData() {
-        const raw = localStorage.getItem('nanobanana_todos');
+        const raw = localStorage.getItem('orbit_mobile_todos');
         if (!raw) return;
 
         try {
@@ -456,10 +454,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 order: index
             }));
             state.tasks = [...state.tasks, ...migratedTasks];
-            localStorage.removeItem('nanobanana_todos');
+            localStorage.removeItem('orbit_mobile_todos');
             saveState();
         } catch {
-            localStorage.removeItem('nanobanana_todos');
+            localStorage.removeItem('orbit_mobile_todos');
         }
     }
 
@@ -521,7 +519,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="list-name">${escapeHtml(list.name)}</span>
                 </div>
                 <div class="list-actions">
-                    <button type="button" class="btn-icon-small settings-list-btn" title="Settings" aria-label="List settings">⚙️</button>
+                    <button type="button" class="btn-icon-small settings-list-btn" title="Settings" aria-label="List settings">
+                        <svg class="icon-btn-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 0 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1Z"/></svg>
+                    </button>
                     ${list.id !== 'default' ? '<button type="button" class="btn-icon-small delete-list-btn" title="Delete" aria-label="Delete list">×</button>' : ''}
                 </div>
             `;
@@ -534,6 +534,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderSidebar();
                 renderHeader();
                 renderTodos();
+                setSidebarOpen(false);
             });
 
             li.querySelector('.settings-list-btn').addEventListener('click', (e) => {
@@ -691,7 +692,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         li.innerHTML = `
             <div class="reorder-controls">
-                <button type="button" class="drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</button>
+                <button type="button" class="drag-handle" title="Drag to reorder" aria-label="Drag to reorder">
+                    <svg class="icon-btn-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="9" cy="18" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="18" r="1.4" fill="currentColor" stroke="none"/></svg>
+                </button>
             </div>
             <button type="button" class="checkbox" role="checkbox" aria-checked="${todo.completed}" aria-label="${todo.completed ? 'Mark as not done' : 'Mark as done'}"></button>
             <div class="todo-content">
@@ -699,7 +702,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="todo-tags">${tagsHtml}</div>
             </div>
             <div class="todo-actions">
-                <button type="button" class="btn-icon-small tag-btn" title="Add tag" aria-label="Add tag">🏷️</button>
+                <button type="button" class="btn-icon-small tag-btn" title="Add tag" aria-label="Add tag">
+                    <svg class="icon-btn-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4 12.7 5.5A2 2 0 0 0 11.3 5H5a2 2 0 0 0-2 2v6.3a2 2 0 0 0 .6 1.4l7.9 7.9a2 2 0 0 0 2.8 0l6.3-6.3a2 2 0 0 0 0-2.8Z"/><circle cx="7.5" cy="8.5" r="1.2" fill="currentColor" stroke="none"/></svg>
+                </button>
                 <button type="button" class="delete-btn" aria-label="Delete task">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -766,7 +771,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateCount(currentTasks) {
         const activeCount = currentTasks.filter((task) => !task.completed).length;
         itemsLeft.textContent = `${activeCount} item${activeCount !== 1 ? 's' : ''} left`;
+        itemsLeft.hidden = currentTasks.length === 0;
         clearCompletedBtn.hidden = !currentTasks.some((task) => task.completed);
+        document.querySelector('.app-footer').hidden = currentTasks.length === 0;
     }
 
     function addTodo() {
@@ -811,7 +818,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const newList = {
             id: uid('list_'),
             name: listName,
-            icon: '📋',
+            icon: 'list',
             theme: DEFAULT_THEME,
             color: DEFAULT_ACCENT,
             resetFrequency: 'none',
@@ -1178,18 +1185,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const themes = [
-        { id: 'default', name: 'Banana', color: '#ffe135', bg: 'url("assets/background.png")' },
+        { id: 'default', name: 'Banana', color: '#ffe135', bg: 'url("../assets/background.png")' },
         { id: 'ocean', name: 'Ocean', color: '#00bfff', bg: 'linear-gradient(45deg, #2b5876, #4e4376)', animated: true },
         { id: 'forest', name: 'Forest', color: '#2ecc71', bg: 'linear-gradient(45deg, #134e5e, #71b280)', animated: true },
         { id: 'sunset', name: 'Sunset', color: '#ff7e5f', bg: 'linear-gradient(45deg, #ff7e5f, #feb47b)', animated: true },
         { id: 'night', name: 'Night', color: '#a8c0ff', bg: 'linear-gradient(45deg, #000428, #004e92)', animated: true },
         { id: 'aurora', name: 'Beam', color: '#00ffcc', bg: 'linear-gradient(45deg, #00c6ff, #0072ff)', animated: true },
         { id: 'candy', name: 'Candy', color: '#ff69b4', bg: 'linear-gradient(45deg, #ff9a9e, #fecfef)', animated: true },
-        { id: 'nature', name: 'Nature', color: '#a8e6cf', bg: 'url("cena-lic-lp-nature-cropped.jpg")' },
-        { id: 'galaxy', name: 'Galaxy', color: '#dcedc1', bg: 'url("m31-layered-uv-and-optical.jpg")' },
-        { id: 'dust', name: 'Cosmic', color: '#ffd3b6', bg: 'url("pia18915-planck-polarizeddust-2.jpg")' },
-        { id: 'nebula', name: 'Nebula', color: '#ffaaa5', bg: 'url("stsci-01g8jzq6gwxhex15pyy60wdrsk-2.jpg")' },
-        { id: 'webb', name: 'Webb', color: '#ff8b94', bg: 'url("web-first-images-release.jpg")' }
+        { id: 'nature', name: 'Nature', color: '#a8e6cf', bg: 'url("../cena-lic-lp-nature-cropped.jpg")' },
+        { id: 'galaxy', name: 'Galaxy', color: '#dcedc1', bg: 'url("../m31-layered-uv-and-optical.jpg")' },
+        { id: 'dust', name: 'Cosmic', color: '#ffd3b6', bg: 'url("../pia18915-planck-polarizeddust-2.jpg")' },
+        { id: 'nebula', name: 'Nebula', color: '#ffaaa5', bg: 'url("../stsci-01g8jzq6gwxhex15pyy60wdrsk-2.jpg")' },
+        { id: 'webb', name: 'Webb', color: '#ff8b94', bg: 'url("../web-first-images-release.jpg")' }
     ];
 
     function makeThemeButton(theme, currentThemeId, list) {
@@ -1317,7 +1324,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderBitsControls();
     }
 
-    const MEDIA_DB = 'nanobanana_media';
+    const MEDIA_DB = 'orbit_mobile_media';
     const MEDIA_STORE = 'wallpapers';
 
     function openMediaDb() {
@@ -1589,10 +1596,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function applyLayout() {
         const side = state.settings.sidebar?.side === 'right' ? 'right' : 'left';
-        const mode = state.settings.sidebar?.mode === 'overlay' ? 'overlay' : 'dock';
         appWrapper.classList.toggle('sidebar-right', side === 'right');
-        appWrapper.classList.toggle('sidebar-mode-dock', mode === 'dock');
-        appWrapper.classList.toggle('sidebar-mode-overlay', mode === 'overlay');
+        appWrapper.classList.remove('sidebar-mode-dock');
+        appWrapper.classList.add('sidebar-mode-overlay');
+        state.settings.sidebar.mode = 'overlay';
     }
 
     const DEFAULT_WINDOW = { width: 68, height: 78 };
@@ -1602,7 +1609,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let editMode = false;
 
     function isPhoneLayout() {
-        return phoneLayoutMql.matches;
+        return true;
     }
 
     function applyWindowSize() {
@@ -1760,7 +1767,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function isDesktopDock() {
-        return state.settings.sidebar.mode === 'dock' && window.matchMedia('(min-width: 769px)').matches;
+        return false;
     }
 
     function setSidebarPlacement(side, mode) {
@@ -1861,17 +1868,10 @@ document.addEventListener('DOMContentLoaded', () => {
         return clampWidgetPercent(Number(saved.x), Number(saved.y));
     }
 
-    function applyWidgetPos(el, name) {
-        const pos = getWidgetPos(name);
-        if (!pos) {
-            el.style.visibility = 'hidden';
-            el.style.left = '0%';
-            el.style.top = '0%';
-            return;
-        }
+    function applyWidgetPos(el) {
         el.style.visibility = '';
-        el.style.left = `${pos.x}%`;
-        el.style.top = `${pos.y}%`;
+        el.style.left = '';
+        el.style.top = '';
     }
 
     function applyWidgetScale(el, name) {
@@ -1909,23 +1909,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function placeDefaultWidgets() {
-        const floats = [...widgetLayer.querySelectorAll('.widget-float')];
-        const auto = floats.filter((el) => !widgetRecord(el.dataset.widget).custom);
-        if (!auto.length) return;
-        const wrap = appWrapper.getBoundingClientRect();
-        const vw = Math.max(1, window.innerWidth);
-        const vh = Math.max(1, window.innerHeight);
-        const gap = 10;
-        const boxes = auto.map((el) => el.getBoundingClientRect());
-        const maxH = Math.max(...boxes.map((box) => box.height), 32);
-        let yPx = wrap.top - 12 - maxH;
-        if (yPx < 8) yPx = 8;
-        let xPx = wrap.left;
-        auto.forEach((el, index) => {
-            const box = boxes[index];
-            setWidgetPos(el.dataset.widget, (xPx / vw) * 100, (yPx / vh) * 100, false, false);
-            xPx += box.width + gap;
-        });
+        return;
     }
 
     function scheduleWidgetLayout() {
@@ -2143,6 +2127,8 @@ document.addEventListener('DOMContentLoaded', () => {
         menuBtn.classList.toggle('is-open', open);
         menuBtn.setAttribute('aria-expanded', String(open));
         menuBtn.setAttribute('aria-label', open ? 'Close lists' : 'Open lists');
+        sidebar.setAttribute('aria-hidden', String(!open));
+        sidebar.toggleAttribute('inert', !open);
     }
 
     function toggleSidebar() {

@@ -2,3 +2,10 @@
 ._*
 **/.DS_Store
 **/._*
+mobile/node_modules/
+mobile/ios/
+mobile/android/
+mobile/dist/
+*.ipa
+*.apk
+*.dSYM
