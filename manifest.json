@@ -1,10 +1,10 @@
 {
-  "name": "Marcus' Tasks",
-  "short_name": "Tasks",
-  "description": "A beautiful to-do list app with liquid glass design",
+  "name": "Orbit",
+  "short_name": "Orbit",
+  "description": "A liquid glass to-do app with particles, lists, and widgets",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#1a1a1a",
+  "background_color": "#0b0814",
   "theme_color": "#b19eef",
   "orientation": "portrait",
   "icons": [
