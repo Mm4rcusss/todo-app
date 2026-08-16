@@ -1542,7 +1542,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyListAccent(list = currentList()) {
         const accent = list?.color || DEFAULT_ACCENT;
         document.documentElement.style.setProperty('--color-accent', accent);
-        document.querySelector('meta[name="theme-color"]')?.setAttribute('content', accent);
+        document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#050816');
     }
 
     function applyTheme(themeId) {

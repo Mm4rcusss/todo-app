@@ -4,8 +4,8 @@
   "description": "Orbit — a liquid glass to-do app for iPhone",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#0b0814",
-  "theme_color": "#b19eef",
+  "background_color": "#050816",
+  "theme_color": "#050816",
   "orientation": "portrait",
   "icons": [
     {
