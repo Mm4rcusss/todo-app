@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const taskScaleUp = document.getElementById('task-scale-up');
     const taskScaleValue = document.getElementById('task-scale-value');
     const taskScaleReset = document.getElementById('task-scale-reset');
+    const taskScaleSlider = document.getElementById('task-scale-slider');
     const appContainer = document.querySelector('.app-container');
     const themeModal = document.getElementById('theme-modal');
     const themeGrid = document.getElementById('theme-grid');
@@ -364,7 +365,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!state.settings.window) state.settings.window = { width: 68, height: 78 };
             state.settings.window.width = clamp(Number(state.settings.window.width) || 68, 28, 96);
             state.settings.window.height = clamp(Number(state.settings.window.height) || 78, 40, 94);
-            state.settings.taskScale = clamp(Number(state.settings.taskScale) || 1, 0.8, 1.5);
+            state.settings.taskScale = clamp(Number(state.settings.taskScale) || 1, 0.55, 2.2);
             if (!state.bitsParams || typeof state.bitsParams !== 'object') state.bitsParams = {};
             if (!state.wallpaperAdjust || typeof state.wallpaperAdjust !== 'object') state.wallpaperAdjust = {};
             if (!Array.isArray(state.customThemes)) state.customThemes = [];
@@ -1604,7 +1605,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const DEFAULT_WINDOW = { width: 68, height: 78 };
     const WINDOW_LIMITS = { minW: 28, maxW: 96, minH: 40, maxH: 94 };
-    const TASK_SCALE = { min: 0.8, max: 1.5, step: 0.1, def: 1 };
+    const TASK_SCALE = { min: 0.55, max: 2.2, step: 0.05, def: 1 };
     const phoneLayoutMql = window.matchMedia('(max-width: 768px)');
     let editMode = false;
 
@@ -1637,15 +1638,27 @@ document.addEventListener('DOMContentLoaded', () => {
         if (persist) saveState();
     }
 
+    function snapTaskScale(scale) {
+        const stepped = Math.round(scale / TASK_SCALE.step) * TASK_SCALE.step;
+        return clamp(Number(stepped.toFixed(2)), TASK_SCALE.min, TASK_SCALE.max);
+    }
+
     function applyTaskScale(live = false) {
         let scale = clamp(Number(state.settings.taskScale) || TASK_SCALE.def, TASK_SCALE.min, TASK_SCALE.max);
         if (!live) {
-            scale = Math.round(scale * 10) / 10;
+            scale = snapTaskScale(scale);
             state.settings.taskScale = scale;
         }
         document.documentElement.style.setProperty('--task-scale', String(scale));
+        const percent = Math.round(scale * 100);
         if (taskScaleValue) {
-            taskScaleValue.textContent = `${Math.round(scale * 100)}%`;
+            taskScaleValue.textContent = `${percent}%`;
+        }
+        if (taskScaleSlider && document.activeElement !== taskScaleSlider) {
+            taskScaleSlider.min = String(Math.round(TASK_SCALE.min * 100));
+            taskScaleSlider.max = String(Math.round(TASK_SCALE.max * 100));
+            taskScaleSlider.step = String(Math.round(TASK_SCALE.step * 100));
+            taskScaleSlider.value = String(percent);
         }
         if (taskScaleDown) taskScaleDown.disabled = scale <= TASK_SCALE.min + 0.001;
         if (taskScaleUp) taskScaleUp.disabled = scale >= TASK_SCALE.max - 0.001;
@@ -1665,10 +1678,16 @@ document.addEventListener('DOMContentLoaded', () => {
         taskScaleDown?.addEventListener('click', () => bumpTaskScale(-1));
         taskScaleUp?.addEventListener('click', () => bumpTaskScale(1));
         taskScaleReset?.addEventListener('click', () => setTaskScale(TASK_SCALE.def));
+        taskScaleSlider?.addEventListener('input', () => {
+            setTaskScale(Number(taskScaleSlider.value) / 100, false);
+        });
+        taskScaleSlider?.addEventListener('change', () => {
+            setTaskScale(Number(taskScaleSlider.value) / 100, true);
+        });
 
         let pinch = null;
         const pinchDist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-        const pinchTarget = appContainer || todoList;
+        const pinchTarget = document.querySelector('.task-scroll') || todoList;
 
         pinchTarget.addEventListener('touchstart', (e) => {
             if (!isPhoneLayout() || e.touches.length !== 2) return;
@@ -1710,6 +1729,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTaskScale(TASK_SCALE.def);
             }
         });
+    }
+
+    function bindComposerDock() {
+        const dock = document.querySelector('.composer-dock');
+        const viewport = window.visualViewport;
+        if (!dock || !viewport) return;
+
+        const sync = () => {
+            const inset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+            const keyboardOpen = inset > 8;
+            dock.style.transform = keyboardOpen ? `translateY(${-inset}px)` : '';
+            dock.style.paddingBottom = keyboardOpen ? '0.55rem' : '';
+        };
+
+        viewport.addEventListener('resize', sync);
+        viewport.addEventListener('scroll', sync);
+        window.addEventListener('focusin', sync);
+        window.addEventListener('focusout', () => window.setTimeout(sync, 50));
     }
 
     function setEditMode(on) {
@@ -2272,6 +2309,7 @@ document.addEventListener('DOMContentLoaded', () => {
         petRemoveBtn.addEventListener('click', removePet);
         bindWindowResize();
         bindTaskScale();
+        bindComposerDock();
 
         confirmYesBtn.addEventListener('click', () => {
             closeModal(confirmModal);

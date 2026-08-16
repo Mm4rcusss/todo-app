@@ -72,24 +72,27 @@
                 </div>
             </header>
 
-            <ul id="todo-list" class="todo-list"></ul>
-            <div id="empty-state" class="empty-state" hidden>
-                <p>Nothing here yet</p>
-                <span>Tap below to add your first task</span>
+            <div class="task-scroll">
+                <ul id="todo-list" class="todo-list"></ul>
+                <div id="empty-state" class="empty-state" hidden>
+                    <p>Nothing here yet</p>
+                    <span>Tap below to add your first task</span>
+                </div>
             </div>
 
-            <div class="app-footer">
-                <span id="items-left">0 items left</span>
-                <button type="button" id="clear-completed" class="btn-text">Clear done</button>
-            </div>
-
-            <div class="input-group composer">
-                <input type="text" id="todo-input" placeholder="Add a task" autocomplete="off" maxlength="240" enterkeyhint="done" aria-label="New task">
-                <button type="button" id="add-btn" class="btn-primary" aria-label="Add task">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                </button>
+            <div class="composer-dock">
+                <div class="app-footer">
+                    <span id="items-left">0 items left</span>
+                    <button type="button" id="clear-completed" class="btn-text">Clear done</button>
+                </div>
+                <div class="input-group composer">
+                    <input type="text" id="todo-input" placeholder="Add a task" autocomplete="off" maxlength="240" enterkeyhint="done" aria-label="New task">
+                    <button type="button" id="add-btn" class="btn-primary" aria-label="Add task">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    </button>
+                </div>
             </div>
         </main>
     </div>
@@ -160,14 +163,14 @@
                 <a class="settings-link" href="../">Switch to website</a>
             </div>
             <div class="setting-group" id="task-scale-group">
-                <label>Task size</label>
+                <label for="task-scale-slider">Task size <span id="task-scale-value">100%</span></label>
+                <input type="range" id="task-scale-slider" min="55" max="220" step="5" value="100" aria-label="Task size">
                 <div class="scale-row">
                     <button type="button" id="task-scale-down" aria-label="Smaller tasks">−</button>
-                    <span id="task-scale-value">100%</span>
                     <button type="button" id="task-scale-up" aria-label="Larger tasks">+</button>
                 </div>
                 <button type="button" id="task-scale-reset" class="btn-text">Reset size</button>
-                <p class="setting-hint">Pinch the list, or use + and −, to make rows easier to tap.</p>
+                <p class="setting-hint">Drag the slider or pinch the list. Size goes from 55% to 220%.</p>
             </div>
             <div class="setting-group">
                 <label for="prefs-list-color">List color</label>
