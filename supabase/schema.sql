@@ -306,6 +306,12 @@ begin
     ) then
         execute 'alter publication supabase_realtime add table public.list_members';
     end if;
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'user_prefs'
+    ) then
+        execute 'alter publication supabase_realtime add table public.user_prefs';
+    end if;
 end $$;
 
 -- Per-account wallpaper files. Path: {user_id}/wallpapers/{id}.jpg

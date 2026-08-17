@@ -2546,6 +2546,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const id = uid('custom_');
             await wallpaperPut(id, dataUrl);
+            try {
+                const blob = await (await fetch(dataUrl)).blob();
+                await window.OrbitSync?.uploadWallpaper?.(id, blob);
+            } catch {
+                /* Local save still works; cloud upload retries on the next sync. */
+            }
             const custom = {
                 id,
                 name: (named || suggested).slice(0, 32),
@@ -2558,13 +2564,7 @@ document.addEventListener('DOMContentLoaded', () => {
             saveState();
             await applyTheme(id);
             renderThemeOptions();
-            try {
-                const blob = await (await fetch(dataUrl)).blob();
-                await window.OrbitSync?.uploadWallpaper?.(id, blob);
-                setWallpaperStatus('Wallpaper added. Signed-in accounts sync it across devices.');
-            } catch {
-                setWallpaperStatus('Wallpaper saved on this device. Cloud photo upload is not set up yet.');
-            }
+            setWallpaperStatus('Wallpaper added. Signed-in accounts sync it across devices.');
         } catch (err) {
             setWallpaperStatus(err.message || 'Could not save that wallpaper.');
         }
@@ -2721,13 +2721,15 @@ document.addEventListener('DOMContentLoaded', () => {
         resetBackgroundLayer();
 
         const custom = state.customThemes.find((theme) => theme.id === themeId);
-        if (custom) {
-            backgroundLayer.style.backgroundColor = custom.color || '#050816';
+        if (custom || String(themeId || '').startsWith('custom_')) {
+            backgroundLayer.style.backgroundColor = custom?.color || '#050816';
             backgroundLayer.style.backgroundRepeat = 'no-repeat';
             wallpaperGet(themeId).then((dataUrl) => {
                 if (currentList()?.theme !== themeId) return;
-                if (dataUrl) backgroundLayer.style.backgroundImage = `url("${dataUrl}")`;
-                applyWallpaperAdjust(themeId);
+                if (dataUrl) {
+                    backgroundLayer.style.backgroundImage = `url("${dataUrl}")`;
+                    applyWallpaperAdjust(themeId);
+                }
             }).catch(() => {});
             applyWallpaperAdjust(themeId);
             renderBitsControls();

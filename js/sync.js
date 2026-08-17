@@ -10,6 +10,8 @@
     let ready = false;
     let pollTimer = 0;
     let liveChannel = null;
+    let wallpaperTimer = 0;
+    let wallpaperChannel = null;
     const TOMBSTONE_KEY = 'orbit_deleted_lists';
     const GROUP_TOMBSTONE_KEY = 'orbit_deleted_groups';
     const KNOWN_LISTS_KEY = 'orbit_known_lists';
@@ -325,6 +327,19 @@
         return `${userId}/wallpapers/${String(id)}.jpg`;
     }
 
+    async function upsertUserPrefs(sb, user, state) {
+        const { error } = await sb.from('user_prefs').upsert({
+            user_id: user.id,
+            settings: settingsForCloud(state.settings),
+            bits_params: state.bitsParams || {},
+            wallpaper_adjust: state.wallpaperAdjust && typeof state.wallpaperAdjust === 'object' ? state.wallpaperAdjust : {},
+            custom_themes: themesForCloud(state.customThemes),
+            current_list_id: state.currentListId || null,
+            updated_at: nowIso()
+        }, { onConflict: 'user_id' });
+        if (error) throw error;
+    }
+
     function dataUrlToBlob(dataUrl) {
         const parts = String(dataUrl || '').split(',');
         const head = parts[0] || '';
@@ -366,46 +381,99 @@
         if (error && !/not found|404/i.test(error.message || '')) throw error;
     }
 
+    async function downloadWallpaperBlob(sb, userId, id) {
+        const path = wallpaperObjectPath(userId, id);
+        const { data, error } = await sb.storage.from(MEDIA_BUCKET).download(path);
+        if (!error && data) return data;
+        const signed = await sb.storage.from(MEDIA_BUCKET).createSignedUrl(path, 120);
+        if (signed.error || !signed.data?.signedUrl) return null;
+        const res = await fetch(signed.data.signedUrl);
+        if (!res.ok) return null;
+        return res.blob();
+    }
+
+    async function uploadMissingWallpapers() {
+        const sb = await getClient();
+        const user = await sessionUser();
+        if (!sb || !user || syncPrefs().mode === 'off') return;
+        const themes = hooks.getState?.()?.customThemes || [];
+        let remoteNames = new Set();
+        const listed = await sb.storage.from(MEDIA_BUCKET).list(`${user.id}/wallpapers`, { limit: 50 });
+        if (!listed.error) {
+            remoteNames = new Set((listed.data || []).map((row) => String(row.name || '').replace(/\.jpg$/i, '')));
+        }
+        for (const theme of themes) {
+            const id = String(theme.id);
+            if (remoteNames.has(id)) continue;
+            const dataUrl = await hooks.wallpaperGet?.(id);
+            if (!dataUrl) continue;
+            try {
+                await uploadWallpaperFile(id, dataUrlToBlob(dataUrl));
+            } catch (err) {
+                console.warn('Orbit wallpaper upload', err);
+            }
+        }
+    }
+
+    async function downloadMissingWallpapers() {
+        const sb = await getClient();
+        const user = await sessionUser();
+        if (!sb || !user || syncPrefs().mode === 'off') return;
+        const themes = hooks.getState?.()?.customThemes || [];
+        let wrote = false;
+        for (const theme of themes) {
+            const id = String(theme.id);
+            const local = await hooks.wallpaperGet?.(id);
+            if (local) continue;
+            try {
+                const blob = await downloadWallpaperBlob(sb, user.id, id);
+                if (!blob) continue;
+                await hooks.wallpaperPut?.(id, await blobToDataUrl(blob));
+                wrote = true;
+            } catch (err) {
+                console.warn('Orbit wallpaper download', err);
+            }
+        }
+        return wrote;
+    }
+
     async function syncWallpaperMedia() {
         try {
-            const sb = await getClient();
-            const user = await sessionUser();
-            if (!sb || !user || syncPrefs().mode === 'off') return;
-            const state = hooks.getState?.() || {};
-            const themes = state.customThemes || [];
-            let remoteNames = new Set();
-            const listed = await sb.storage.from(MEDIA_BUCKET).list(`${user.id}/wallpapers`, { limit: 50 });
-            if (!listed.error) {
-                remoteNames = new Set((listed.data || []).map((row) => String(row.name || '').replace(/\.jpg$/i, '')));
-            }
-
-            for (const theme of themes) {
-                const id = String(theme.id);
-                if (remoteNames.has(id)) continue;
-                const dataUrl = await hooks.wallpaperGet?.(id);
-                if (!dataUrl) continue;
-                try {
-                    await uploadWallpaperFile(id, dataUrlToBlob(dataUrl));
-                } catch (err) {
-                    console.warn('Orbit wallpaper upload', err);
-                }
-            }
-
-            for (const theme of themes) {
-                const id = String(theme.id);
-                const local = await hooks.wallpaperGet?.(id);
-                if (local) continue;
-                try {
-                    const { data, error } = await sb.storage.from(MEDIA_BUCKET).download(wallpaperObjectPath(user.id, id));
-                    if (error || !data) continue;
-                    await hooks.wallpaperPut?.(id, await blobToDataUrl(data));
-                } catch (err) {
-                    console.warn('Orbit wallpaper download', err);
-                }
-            }
+            await uploadMissingWallpapers();
+            await downloadMissingWallpapers();
             hooks.onMedia?.();
         } catch (err) {
             console.warn('Orbit wallpaper sync', err);
+        }
+    }
+
+    let wallpaperBusy = false;
+    async function pullWallpaperState() {
+        if (wallpaperBusy || syncPrefs().mode === 'off') return;
+        const sb = await getClient();
+        const user = await sessionUser();
+        const state = hooks.getState?.();
+        if (!sb || !user || !state) return;
+        wallpaperBusy = true;
+        try {
+            const { data: prefs, error } = await sb.from('user_prefs')
+                .select('custom_themes, wallpaper_adjust')
+                .eq('user_id', user.id)
+                .maybeSingle();
+            if (error) throw error;
+            const remoteThemes = Array.isArray(prefs?.custom_themes) ? prefs.custom_themes : [];
+            const merged = mergeById(state.customThemes || [], remoteThemes).slice(0, WALLPAPER_MAX);
+            state.customThemes = merged;
+            if (prefs?.wallpaper_adjust && typeof prefs.wallpaper_adjust === 'object') {
+                state.wallpaperAdjust = { ...(state.wallpaperAdjust || {}), ...prefs.wallpaper_adjust };
+            }
+            hooks.persistLocal?.();
+            await downloadMissingWallpapers();
+            hooks.onMedia?.();
+        } catch (err) {
+            console.warn('Orbit wallpaper pull', err);
+        } finally {
+            wallpaperBusy = false;
         }
     }
 
@@ -895,7 +963,7 @@
             wallpaperAdjust,
             currentListId: cloudState.currentListId
         });
-        void syncWallpaperMedia();
+        await syncWallpaperMedia();
     }
 
     async function push() {
@@ -906,6 +974,8 @@
         if (prefsNow.mode === 'off') return;
         const state = hooks.getState();
         if (ensureHomeListId(state, user.id) || ensureDefaultTagIds(state, user.id)) hooks.persistLocal?.();
+        await uploadMissingWallpapers();
+        await upsertUserPrefs(sb, user, hooks.getState());
         rememberKnown('list', (state.lists || []).map((list) => list.id));
         rememberKnown('group', (state.groups || []).map((group) => group.id));
 
@@ -1088,21 +1158,12 @@
             if (error) throw error;
         }
 
-        const { error: prefsError } = await sb.from('user_prefs').upsert({
-            user_id: user.id,
-            settings: settingsForCloud(state.settings),
-            bits_params: state.bitsParams || {},
-            wallpaper_adjust: state.wallpaperAdjust && typeof state.wallpaperAdjust === 'object' ? state.wallpaperAdjust : {},
-            custom_themes: themesForCloud(state.customThemes),
-            current_list_id: state.currentListId || null,
-            updated_at: nowIso()
-        }, { onConflict: 'user_id' });
-        if (prefsError) throw prefsError;
-
+        await upsertUserPrefs(sb, user, hooks.getState() || state);
         lastSyncAt = nowIso();
         lastError = '';
         pullBlocked = false;
-        void syncWallpaperMedia();
+        await downloadMissingWallpapers();
+        hooks.onMedia?.();
     }
 
     async function run(kind, options = {}) {
@@ -1136,6 +1197,7 @@
 
     function schedulePull() {
         if (!isConfigured() || !ready) return;
+        if (syncPrefs().mode !== 'off') void pullWallpaperState();
         if (pullBlocked || syncPrefs().mode !== 'live') return;
         sessionUser().then((user) => {
             if (!user) return;
@@ -1156,6 +1218,37 @@
             liveChannel.unsubscribe();
             liveChannel = null;
         }
+    }
+
+    function stopWallpaperWatch() {
+        if (wallpaperTimer) {
+            global.clearInterval(wallpaperTimer);
+            wallpaperTimer = 0;
+        }
+        if (wallpaperChannel) {
+            wallpaperChannel.unsubscribe();
+            wallpaperChannel = null;
+        }
+    }
+
+    async function startWallpaperWatch() {
+        stopWallpaperWatch();
+        if (syncPrefs().mode === 'off') return;
+        const sb = await getClient();
+        const user = await sessionUser();
+        if (!sb || !user) return;
+        wallpaperChannel = sb.channel('orbit-wallpapers')
+            .on('postgres_changes', {
+                event: '*',
+                schema: 'public',
+                table: 'user_prefs',
+                filter: `user_id=eq.${user.id}`
+            }, () => { void pullWallpaperState(); })
+            .subscribe();
+        wallpaperTimer = global.setInterval(() => {
+            if (!document.hidden) void pullWallpaperState();
+        }, 4000);
+        await pullWallpaperState();
     }
 
     async function startLive() {
@@ -1211,9 +1304,13 @@
             return syncPrefs().mode;
         },
         applySyncMode() {
-            if (syncPrefs().mode === 'live') return startLive();
-            stopLive();
-            return Promise.resolve();
+            if (syncPrefs().mode === 'off') {
+                stopLive();
+                stopWallpaperWatch();
+                return Promise.resolve();
+            }
+            const live = syncPrefs().mode === 'live' ? startLive() : (stopLive(), Promise.resolve());
+            return Promise.all([live, startWallpaperWatch()]);
         },
         wallpaperQuota,
         async uploadWallpaper(id, blob) {
@@ -1248,19 +1345,24 @@
                     const prefsNow = syncPrefs();
                     if (prefsNow.mode === 'off') {
                         stopLive();
+                        stopWallpaperWatch();
                     } else if (event === 'SIGNED_IN') {
                         await run('both', { force: true });
                         await startLive();
+                        await startWallpaperWatch();
                     } else if (prefsNow.mode === 'live') {
                         await run(event === 'TOKEN_REFRESHED' ? 'push' : 'both');
                         await startLive();
+                        await startWallpaperWatch();
                     } else {
                         await run('push');
                         stopLive();
+                        await startWallpaperWatch();
                     }
                 }
                 if (event === 'SIGNED_OUT') {
                     stopLive();
+                    stopWallpaperWatch();
                     hooks.onStatus?.();
                 }
                 hooks.onAuth?.();
@@ -1271,7 +1373,10 @@
             window.addEventListener('focus', () => schedulePull());
             await OrbitSync.consumeInviteFromUrl();
             ready = true;
-            if (await sessionUser()) await startLive();
+            if (await sessionUser()) {
+                await startLive();
+                await startWallpaperWatch();
+            }
             hooks.onStatus?.();
         },
         async sendMagicLink(email) {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tasks-app-v48';
+const CACHE_NAME = 'tasks-app-v49';
 const PRECACHE_URLS = [
     './',
     './index.html',
