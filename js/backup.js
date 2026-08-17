@@ -53,12 +53,13 @@
         return {
             id,
             name,
-            icon: clip(list.icon, 8) || '📋',
+            icon: clip(list.icon, 32) || '📋',
             theme: clip(list.theme, 80) || 'rb-particles',
             color: isHexColor(list.color) ? list.color : '#b19eef',
             resetFrequency: clip(list.resetFrequency, 20) || 'none',
             reset: sanitizeReset(list.reset),
-            groupId: clip(list.groupId, 80)
+            groupId: clip(list.groupId, 80),
+            updatedAt: clip(list.updatedAt, 40)
         };
     }
 
@@ -78,7 +79,8 @@
             listId,
             date: clip(task.date, 10),
             tags,
-            order: Number.isFinite(Number(task.order)) ? Number(task.order) : index
+            order: Number.isFinite(Number(task.order)) ? Number(task.order) : index,
+            updatedAt: clip(task.updatedAt, 40)
         };
     }
 
@@ -214,10 +216,11 @@
         } catch {
             throw new Error('That file is not valid JSON.');
         }
-        if (!raw || raw.format !== FORMAT) {
+        const looksLikeBackup = raw && (raw.format === FORMAT || (raw.data && Array.isArray(raw.data.lists)));
+        if (!looksLikeBackup) {
             throw new Error('This is not an Orbit backup file.');
         }
-        if (raw.version !== VERSION) {
+        if (Number(raw.version || VERSION) > VERSION) {
             throw new Error('This backup was made with a newer Orbit and cannot be opened yet.');
         }
         if (!raw.data || !Array.isArray(raw.data.lists) || !Array.isArray(raw.data.tasks)) {
@@ -229,7 +232,8 @@
         }
         return {
             data,
-            media: sanitizeMedia(raw.media)
+            media: sanitizeMedia(raw.media),
+            exportedAt: raw.exportedAt || ''
         };
     }
 
@@ -312,6 +316,49 @@
                 wallpaperAdjust
             },
             media
+        };
+    }
+
+    function selectLists(imported, selectedIds) {
+        const wanted = new Set((selectedIds || []).map((id) => String(id)));
+        const lists = (imported.data.lists || []).filter((list) => wanted.has(String(list.id)));
+        if (!lists.length) throw new Error('Pick at least one list to import.');
+        const listIds = new Set(lists.map((list) => String(list.id)));
+        const tasks = (imported.data.tasks || []).filter((task) => listIds.has(String(task.listId)));
+        const groupIds = new Set(lists.map((list) => list.groupId).filter(Boolean).map(String));
+        const groups = (imported.data.groups || []).filter((group) => groupIds.has(String(group.id)));
+        const tagIds = new Set();
+        tasks.forEach((task) => (task.tags || []).forEach((id) => tagIds.add(String(id))));
+        const tags = (imported.data.tags || []).filter((tag) => tagIds.has(String(tag.id)));
+        let currentListId = imported.data.currentListId;
+        if (!listIds.has(String(currentListId))) currentListId = lists[0].id;
+        const themeIds = new Set(
+            lists.map((list) => list.theme).filter((id) => String(id || '').startsWith('custom_'))
+        );
+        const customThemes = (imported.data.customThemes || []).filter((theme) => themeIds.has(theme.id));
+        const wallpapers = {};
+        Object.entries(imported.media?.wallpapers || {}).forEach(([id, dataUrl]) => {
+            if (themeIds.has(id)) wallpapers[id] = dataUrl;
+        });
+        const wallpaperAdjust = {};
+        Object.entries(imported.data.wallpaperAdjust || {}).forEach(([id, value]) => {
+            if (themeIds.has(id)) wallpaperAdjust[id] = value;
+        });
+        return {
+            data: {
+                ...imported.data,
+                lists,
+                tasks,
+                tags,
+                groups,
+                currentListId,
+                customThemes,
+                wallpaperAdjust
+            },
+            media: {
+                wallpapers,
+                pet: imported.media?.pet || null
+            }
         };
     }
 
@@ -414,6 +461,7 @@
         build,
         parse,
         merge,
+        selectLists,
         applyThemeFallback,
         byteSize,
         canShareFile,

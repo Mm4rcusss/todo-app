@@ -280,12 +280,14 @@
             </div>
             <div class="setting-group" id="backup-group">
                 <label>Backup</label>
-                <p class="setting-hint">Save a JSON file you can restore later or send to someone else.</p>
+                <p class="setting-hint">Save a JSON file you can restore later. Import lets you pick which lists to use.</p>
                 <label class="check-row"><input type="checkbox" id="backup-include-media"> Include photos and pet</label>
                 <button type="button" id="backup-export-btn" class="settings-link">Export backup</button>
                 <button type="button" id="backup-share-btn" class="settings-link" hidden>Share backup</button>
-                <button type="button" id="backup-import-btn" class="settings-link">Import backup</button>
-                <input type="file" id="backup-import-input" accept=".json,application/json" hidden>
+                <label class="settings-link backup-import-label">
+                    Import backup
+                    <input type="file" id="backup-import-input" accept=".json,application/json,text/plain,*/*" hidden>
+                </label>
                 <button type="button" id="backup-restore-btn" class="settings-link" hidden>Restore my lists</button>
                 <p id="backup-restore-hint" class="setting-hint" hidden>Go back to what you had before a template or import.</p>
             </div>
@@ -304,7 +306,7 @@
             </div>
             <div class="setting-group" id="share-list-group">
                 <label>Share this list</label>
-                <p class="setting-hint">They will need to sign in, then this list appears in their sidebar.</p>
+                <p class="setting-hint">Copy the link and send it. They sign in with their own account, then this list stays in sync for both of you.</p>
                 <button type="button" id="share-list-btn" class="settings-link">Copy invite link</button>
                 <p id="share-list-status" class="theme-upload-status" hidden></p>
             </div>
@@ -346,7 +348,20 @@
         </div>
     </div>
 
-    <div id="confirm-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div id="backup-import-modal" class="modal hidden modal-front" role="dialog" aria-modal="true" aria-labelledby="backup-import-title">
+        <div class="modal-content">
+            <h3 id="backup-import-title">Choose lists to import</h3>
+            <p class="setting-hint" id="backup-import-meta"></p>
+            <div id="backup-import-lists" class="backup-pick-list"></div>
+            <div class="modal-actions backup-import-actions">
+                <button type="button" id="backup-import-cancel" class="btn-secondary">Cancel</button>
+                <button type="button" id="backup-import-merge" class="btn-primary">Add selected</button>
+                <button type="button" id="backup-import-replace" class="btn-secondary">Replace with selected</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="confirm-modal" class="modal hidden modal-front" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <div class="modal-content">
             <h3 id="confirm-title">Confirm Action</h3>
             <p id="confirm-message"></p>

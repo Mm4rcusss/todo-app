@@ -257,3 +257,25 @@ grant select, insert, update, delete on
     public.user_prefs
 to authenticated;
 grant usage on schema public to authenticated;
+
+do $$
+begin
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'tasks'
+    ) then
+        execute 'alter publication supabase_realtime add table public.tasks';
+    end if;
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'lists'
+    ) then
+        execute 'alter publication supabase_realtime add table public.lists';
+    end if;
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'list_members'
+    ) then
+        execute 'alter publication supabase_realtime add table public.list_members';
+    end if;
+end $$;

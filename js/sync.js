@@ -8,6 +8,9 @@
     let busy = false;
     let pendingKind = null;
     let ready = false;
+    let pollTimer = 0;
+    let liveChannel = null;
+    const INVITE_KEY = 'orbit_invite';
 
     function config() {
         return global.ORBIT_SUPABASE || {};
@@ -90,10 +93,45 @@
         return null;
     }
 
+    function storedInvite() {
+        try {
+            return sessionStorage.getItem(INVITE_KEY) || localStorage.getItem(INVITE_KEY) || '';
+        } catch {
+            return '';
+        }
+    }
+
+    function rememberInvite(token) {
+        if (!token) return;
+        try {
+            sessionStorage.setItem(INVITE_KEY, token);
+            localStorage.setItem(INVITE_KEY, token);
+        } catch {
+            /* ignore quota */
+        }
+    }
+
+    function forgetInvite() {
+        try {
+            sessionStorage.removeItem(INVITE_KEY);
+            localStorage.removeItem(INVITE_KEY);
+        } catch {
+            /* ignore */
+        }
+    }
+
+    function inviteFromLocation() {
+        const params = new URLSearchParams(location.search);
+        const hashParams = new URLSearchParams(String(location.hash || '').replace(/^#/, ''));
+        return params.get('invite') || hashParams.get('invite') || storedInvite();
+    }
+
     function redirectTo() {
         const url = new URL(location.href);
+        const invite = inviteFromLocation();
         url.hash = '';
         url.search = '';
+        if (invite) url.searchParams.set('invite', invite);
         return url.toString();
     }
 
@@ -351,20 +389,34 @@
             if (error) throw error;
         }
 
+        const ownedIds = new Set(owned.map((list) => String(list.id)));
         const localTasks = (state.tasks || []).filter((task) => editableIds.includes(String(task.listId)));
-        if (localTasks.length) {
-            const { error } = await sb.from('tasks').upsert(localTasks.map(toTaskRow), { onConflict: 'id' });
-            if (error) throw error;
-        }
         if (editableIds.length) {
-            const { data: remoteTasks, error: taskSelectError } = await sb.from('tasks').select('id').in('list_id', editableIds);
+            const { data: remoteTasks, error: taskSelectError } = await sb.from('tasks')
+                .select('id, list_id, updated_at')
+                .in('list_id', editableIds);
             if (taskSelectError) throw taskSelectError;
-            const localTaskIds = new Set(localTasks.map((task) => String(task.id)));
-            const extraTasks = (remoteTasks || []).filter((row) => !localTaskIds.has(row.id)).map((row) => row.id);
-            if (extraTasks.length) {
-                const { error } = await sb.from('tasks').delete().in('id', extraTasks);
+            const remoteById = new Map((remoteTasks || []).map((row) => [String(row.id), row]));
+            const toUpsert = localTasks.filter((task) => {
+                const remote = remoteById.get(String(task.id));
+                if (!remote) return true;
+                return stamp(task.updatedAt) >= stamp(remote.updated_at);
+            });
+            if (toUpsert.length) {
+                const { error } = await sb.from('tasks').upsert(toUpsert.map(toTaskRow), { onConflict: 'id' });
                 if (error) throw error;
             }
+            const localTaskIds = new Set(localTasks.map((task) => String(task.id)));
+            const extraOwned = (remoteTasks || [])
+                .filter((row) => ownedIds.has(String(row.list_id)) && !localTaskIds.has(String(row.id)))
+                .map((row) => row.id);
+            if (extraOwned.length) {
+                const { error } = await sb.from('tasks').delete().in('id', extraOwned);
+                if (error) throw error;
+            }
+        } else if (localTasks.length) {
+            const { error } = await sb.from('tasks').upsert(localTasks.map(toTaskRow), { onConflict: 'id' });
+            if (error) throw error;
         }
 
         const tags = (state.tags || []).map((tag) => ({
@@ -426,6 +478,39 @@
         }
     }
 
+    function schedulePull() {
+        if (!isConfigured() || !ready) return;
+        sessionUser().then((user) => {
+            if (user) run('pull');
+        }).catch(() => {});
+    }
+
+    function stopLive() {
+        if (pollTimer) {
+            global.clearInterval(pollTimer);
+            pollTimer = 0;
+        }
+        if (liveChannel) {
+            liveChannel.unsubscribe();
+            liveChannel = null;
+        }
+    }
+
+    async function startLive() {
+        stopLive();
+        const sb = await getClient();
+        const user = await sessionUser();
+        if (!sb || !user) return;
+        liveChannel = sb.channel('orbit-live')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => schedulePull())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'lists' }, () => schedulePull())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'list_members' }, () => schedulePull())
+            .subscribe();
+        pollTimer = global.setInterval(() => {
+            if (!document.hidden) schedulePull();
+        }, 5000);
+    }
+
     function schedulePush() {
         if (!isConfigured() || !ready) return;
         clearTimeout(pushTimer);
@@ -441,6 +526,7 @@
         isHomeListId,
         lastSyncAt() { return lastSyncAt; },
         lastError() { return lastError; },
+        pendingInvite() { return Boolean(inviteFromLocation()); },
         async user() {
             return sessionUser();
         },
@@ -453,20 +539,23 @@
             }
             sb.auth.onAuthStateChange(async (event) => {
                 if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
-                    await run('both');
                     await OrbitSync.consumeInviteFromUrl();
+                    await run('both');
+                    await startLive();
                 }
-                if (event === 'SIGNED_OUT') hooks.onStatus?.();
+                if (event === 'SIGNED_OUT') {
+                    stopLive();
+                    hooks.onStatus?.();
+                }
                 hooks.onAuth?.();
             });
             document.addEventListener('visibilitychange', () => {
-                if (!document.hidden) sessionUser().then((user) => { if (user) run('pull'); });
+                if (!document.hidden) schedulePull();
             });
-            window.addEventListener('focus', () => {
-                sessionUser().then((user) => { if (user) run('pull'); });
-            });
+            window.addEventListener('focus', () => schedulePull());
             await OrbitSync.consumeInviteFromUrl();
             ready = true;
+            if (await sessionUser()) await startLive();
             hooks.onStatus?.();
         },
         async sendMagicLink(email) {
@@ -487,15 +576,26 @@
         async syncNow() {
             await run('both');
         },
+        async pushNow() {
+            await run('push');
+        },
         async createInvite(listId) {
             const sb = await getClient();
             const user = await sessionUser();
             if (!sb || !user) throw new Error('Sign in to share a list.');
+            await run('push');
+            const state = hooks.getState?.() || {};
+            const list = (state.lists || []).find((item) => (
+                String(item.id) === String(listId)
+                || (String(listId) === 'default' && isHomeListId(item.id))
+            ));
+            if (!list) throw new Error('Upload this list first, then share it.');
+            if (list.role === 'editor') throw new Error('Only the owner can share this list.');
             const token = randomToken();
             const expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 365).toISOString();
             const { error } = await sb.from('list_invites').insert({
                 token,
-                list_id: String(listId),
+                list_id: String(list.id),
                 created_by: user.id,
                 expires_at: expires
             });
@@ -512,18 +612,24 @@
             const { data, error } = await sb.rpc('redeem_list_invite', { invite_token: String(token) });
             if (error) throw error;
             await run('pull');
+            if (data) hooks.onJoinedList?.(data);
             return data;
         },
         async consumeInviteFromUrl() {
             const params = new URLSearchParams(location.search);
-            const token = params.get('invite') || sessionStorage.getItem('orbit_invite');
-            if (params.get('invite')) sessionStorage.setItem('orbit_invite', params.get('invite'));
+            const token = inviteFromLocation();
+            if (params.get('invite')) rememberInvite(params.get('invite'));
             if (!token) return;
+            rememberInvite(token);
             const user = await sessionUser();
-            if (!user) return;
+            if (!user) {
+                hooks.onInvitePending?.();
+                hooks.onStatus?.();
+                return;
+            }
             try {
                 await OrbitSync.redeemInvite(token);
-                sessionStorage.removeItem('orbit_invite');
+                forgetInvite();
                 params.delete('invite');
                 const next = `${location.pathname}${params.toString() ? `?${params}` : ''}${location.hash}`;
                 history.replaceState({}, '', next);

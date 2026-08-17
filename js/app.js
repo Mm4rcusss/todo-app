@@ -435,13 +435,50 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (task.order === undefined) task.order = index;
                 if (!task.tags) task.tags = [];
             });
-            saveState();
+            saveState({ skipSync: true });
         } catch {
             console.warn('Saved data was unreadable; starting with a fresh list.');
         }
     }
 
+    const fingerprints = new Map();
+
+    function itemFingerprint(item) {
+        if (!item || typeof item !== 'object') return '';
+        const copy = { ...item };
+        delete copy.updatedAt;
+        return JSON.stringify(copy);
+    }
+
+    function rememberFingerprints() {
+        fingerprints.clear();
+        [...(state.lists || []), ...(state.tasks || []), ...(state.tags || []), ...(state.groups || [])].forEach((item) => {
+            if (item?.id) fingerprints.set(String(item.id), itemFingerprint(item));
+        });
+    }
+
+    function stampDirtyItems() {
+        const now = new Date().toISOString();
+        const mark = (items) => {
+            (items || []).forEach((item) => {
+                if (!item?.id) return;
+                const key = String(item.id);
+                const fp = itemFingerprint(item);
+                if (fingerprints.get(key) !== fp) {
+                    item.updatedAt = now;
+                    fingerprints.set(key, itemFingerprint(item));
+                }
+            });
+        };
+        mark(state.lists);
+        mark(state.tasks);
+        mark(state.tags);
+        mark(state.groups);
+    }
+
     function saveState(options = {}) {
+        if (options.skipSync) rememberFingerprints();
+        else stampDirtyItems();
         try {
             localStorage.setItem('nanobanana_state', JSON.stringify(state));
         } catch (err) {
@@ -2411,6 +2448,11 @@ document.addEventListener('DOMContentLoaded', () => {
             finishDialog(false);
             return true;
         }
+        const importModal = document.getElementById('backup-import-modal');
+        if (importModal && isModalOpen(importModal)) {
+            closeModal(importModal);
+            return true;
+        }
         if (isModalOpen(inputModal)) {
             closeModal(inputModal);
             finishDialog(null);
@@ -2526,19 +2568,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         saveState();
-        loadState();
         refreshAfterBackup();
+        if (window.OrbitSync?.user) {
+            const user = await window.OrbitSync.user();
+            if (user) await window.OrbitSync.pushNow?.();
+        }
     }
 
     function bindBackup() {
         const exportBtn = document.getElementById('backup-export-btn');
         const shareBtn = document.getElementById('backup-share-btn');
-        const importBtn = document.getElementById('backup-import-btn');
         const importInput = document.getElementById('backup-import-input');
         const restoreBtn = document.getElementById('backup-restore-btn');
         const restoreHint = document.getElementById('backup-restore-hint');
         const templateGroup = document.getElementById('template-group');
-        if (!window.OrbitBackup || !exportBtn || !importBtn || !importInput) return;
+        const importModal = document.getElementById('backup-import-modal');
+        if (!window.OrbitBackup || !exportBtn || !importInput) return;
 
         const syncRestoreButton = () => {
             const hasPoint = Boolean(window.OrbitBackup.readRestorePoint(localStorage, STATE_KEY));
@@ -2573,28 +2618,89 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
 
+        let pendingImport = null;
+
+        const closeImportModal = () => {
+            pendingImport = null;
+            if (importModal) closeModal(importModal);
+        };
+
+        const selectedBackupIds = () => Array.from(
+            document.querySelectorAll('#backup-import-lists input[type="checkbox"]:checked')
+        ).map((input) => input.value);
+
+        const openImportPicker = (imported, fileName) => {
+            pendingImport = imported;
+            const meta = document.getElementById('backup-import-meta');
+            const box = document.getElementById('backup-import-lists');
+            if (meta) {
+                const count = imported.data.lists.length;
+                let text = `${fileName || 'Backup'} · ${count} list${count === 1 ? '' : 's'}. Tick the ones you want.`;
+                if (imported.exportedAt) {
+                    const when = Date.parse(imported.exportedAt);
+                    if (Number.isFinite(when)) text += ` Saved ${new Date(when).toLocaleString()}.`;
+                }
+                meta.textContent = text;
+            }
+            if (box) {
+                box.replaceChildren();
+                imported.data.lists.forEach((list) => {
+                    const tasks = imported.data.tasks.filter((task) => String(task.listId) === String(list.id)).length;
+                    const row = document.createElement('label');
+                    row.className = 'check-row';
+                    const boxEl = document.createElement('input');
+                    boxEl.type = 'checkbox';
+                    boxEl.value = String(list.id);
+                    boxEl.checked = true;
+                    row.append(boxEl, document.createTextNode(` ${list.icon || '📋'} ${list.name} (${tasks})`));
+                    box.appendChild(row);
+                });
+            }
+            closeModal(prefsModal);
+            if (importModal) openModal(importModal);
+        };
+
+        const applySelectedBackup = async (mode) => {
+            if (!pendingImport) return;
+            try {
+                const picked = window.OrbitBackup.selectLists(pendingImport, selectedBackupIds());
+                const before = new Set(state.lists.map((list) => String(list.id)));
+                await applyBackup(picked, mode);
+                const added = state.lists.find((list) => !before.has(String(list.id)))
+                    || state.lists.find((list) => sameId(list.id, picked.data.currentListId));
+                if (added) {
+                    state.currentListId = added.id;
+                    saveState();
+                    refreshAfterBackup();
+                }
+                syncRestoreButton();
+                closeImportModal();
+                showNotice(mode === 'replace'
+                    ? 'Backup restored. Restore my lists is in Settings.'
+                    : 'Selected lists added. Restore my lists is in Settings.');
+            } catch (err) {
+                showNotice(err.message || 'Could not import that file.');
+            }
+        };
+
         exportBtn.addEventListener('click', () => exportBackup(false));
         shareBtn?.addEventListener('click', () => exportBackup(true));
-        importBtn.addEventListener('click', () => importInput.click());
         importInput.addEventListener('change', async () => {
             const file = importInput.files?.[0];
             importInput.value = '';
             if (!file) return;
             try {
-                const imported = window.OrbitBackup.parse(await file.text());
-                const proceed = await showConfirm('Import this Orbit backup?');
-                if (!proceed) return;
-                const replace = await showConfirm(
-                    'Replace everything with this backup? Choose Merge to keep yours and add the imported lists.',
-                    { yes: 'Replace', no: 'Merge' }
-                );
-                await applyBackup(imported, replace ? 'replace' : 'merge');
-                syncRestoreButton();
-                closeModal(prefsModal);
-                showNotice(replace ? 'Backup restored. Restore my lists is in Settings.' : 'Backup merged. Restore my lists is in Settings.');
+                openImportPicker(window.OrbitBackup.parse(await file.text()), file.name);
             } catch (err) {
                 showNotice(err.message || 'Could not import that file.');
             }
+        });
+        document.getElementById('backup-import-cancel')?.addEventListener('click', closeImportModal);
+        document.getElementById('backup-import-merge')?.addEventListener('click', () => applySelectedBackup('merge'));
+        document.getElementById('backup-import-replace')?.addEventListener('click', async () => {
+            const ok = await showConfirm('Replace your current lists with the selected backup lists?');
+            if (!ok) return;
+            applySelectedBackup('replace');
         });
 
         restoreBtn?.addEventListener('click', async () => {
@@ -2660,7 +2766,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (emailLabel) emailLabel.textContent = user?.email || '';
         const err = window.OrbitSync?.lastError();
         const synced = window.OrbitSync?.lastSyncAt();
-        const note = err || (synced ? `Last sync ${new Date(synced).toLocaleString()}` : '');
+        const note = err
+            || (window.OrbitSync?.pendingInvite?.() && !user ? 'Sign in to join the shared list from your invite link.' : '')
+            || (synced ? `Last sync ${new Date(synced).toLocaleString()}` : '');
         if (status) {
             status.hidden = !note;
             status.textContent = note;
@@ -2702,7 +2810,23 @@ document.addEventListener('DOMContentLoaded', () => {
             applyCloud: applyCloudState,
             persistLocal: () => saveState({ skipSync: true }),
             onAuth: () => { refreshAccountUi(); },
-            onStatus: () => { refreshAccountUi(); }
+            onStatus: () => { refreshAccountUi(); },
+            onInvitePending: () => {
+                showNotice('Sign in to join that shared list.');
+                refreshAccountUi();
+            },
+            onJoinedList: (listId) => {
+                if (!listId) return;
+                if (state.lists.some((list) => sameId(list.id, listId))) {
+                    state.currentListId = listId;
+                    saveState({ skipSync: true });
+                    renderSidebar();
+                    renderHeader();
+                    renderTodos();
+                    applyTheme(currentList()?.theme || DEFAULT_THEME);
+                }
+                showNotice('You joined a shared list. Changes stay in sync.');
+            }
         });
         refreshAccountUi();
     }
@@ -2875,10 +2999,14 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('share-list-btn')?.addEventListener('click', async () => {
             const status = document.getElementById('share-list-status');
             try {
+                if (status) {
+                    status.hidden = false;
+                    status.textContent = 'Preparing invite…';
+                }
                 const link = await window.OrbitSync.createInvite(settingsListId);
                 try {
                     await navigator.clipboard.writeText(link);
-                    if (status) { status.hidden = false; status.textContent = 'Invite link copied.'; }
+                    if (status) { status.hidden = false; status.textContent = 'Invite copied. Send it — they sign in and the list stays in sync.'; }
                 } catch {
                     if (status) { status.hidden = false; status.textContent = link; }
                 }
@@ -2900,7 +3028,8 @@ document.addEventListener('DOMContentLoaded', () => {
             hideToast();
         });
 
-        [themeModal, prefsModal, confirmModal, inputModal, settingsModal, document.getElementById('tag-modal')].forEach((modal) => {
+        [themeModal, prefsModal, confirmModal, inputModal, settingsModal, document.getElementById('tag-modal'), document.getElementById('backup-import-modal')].forEach((modal) => {
+            if (!modal) return;
             modal.addEventListener('click', (e) => {
                 if (e.target !== modal) return;
                 if (modal === confirmModal) {
