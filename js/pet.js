@@ -15,6 +15,7 @@
     let raf = 0;
     let lastTs = 0;
     let globalScale = 1;
+    let paused = false;
 
     function prefersReducedMotion() {
         return Boolean(global.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
@@ -277,11 +278,12 @@
             stopLoop();
             return;
         }
-        raf = global.requestAnimationFrame(tick);
-        if (document.hidden) {
-            lastTs = ts;
+        if (document.hidden || paused) {
+            lastTs = 0;
+            raf = 0;
             return;
         }
+        raf = global.requestAnimationFrame(tick);
         if (!lastTs) lastTs = ts;
         const dt = Math.min(0.05, (ts - lastTs) / 1000);
         lastTs = ts;
@@ -289,7 +291,7 @@
     }
 
     function startLoop() {
-        if (raf || !flock.size) return;
+        if (raf || !flock.size || paused || document.hidden) return;
         lastTs = 0;
         raf = global.requestAnimationFrame(tick);
     }
@@ -348,9 +350,21 @@
             else stopLoop();
         },
         stop() {
+            paused = false;
             flock.forEach((walker) => walker.destroy());
             flock.clear();
             stopLoop();
+            if (layer) layer.hidden = false;
+        },
+        pause() {
+            paused = true;
+            stopLoop();
+            if (layer) layer.hidden = true;
+        },
+        resume() {
+            paused = false;
+            if (layer) layer.hidden = false;
+            startLoop();
         },
         setScale(next) {
             const value = Number(next);
@@ -360,6 +374,10 @@
         }
     };
 
+    global.addEventListener('visibilitychange', () => {
+        if (document.hidden) stopLoop();
+        else if (!paused) startLoop();
+    });
     global.addEventListener('resize', () => {
         flock.forEach((walker) => walker.onResize());
     });

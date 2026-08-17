@@ -8,7 +8,8 @@
         'grass', 'sunny', 'beach', 'sky', 'meadow', 'blossom', 'peach', 'mint', 'lagoon',
         'nature', 'galaxy', 'dust', 'nebula', 'webb',
         'rb-aurora', 'rb-particles', 'rb-waves', 'rb-silk', 'rb-orbs',
-        'rb-lightning', 'rb-grid', 'rb-plasma'
+        'rb-lightning', 'rb-grid', 'rb-plasma', 'rb-prism', 'rb-threads',
+        'rb-hyperspeed', 'rb-ripple'
     ];
 
     function clip(value, max) {

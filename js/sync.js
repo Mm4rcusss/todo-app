@@ -36,6 +36,19 @@
         return next;
     }
 
+    function forgetDeleted(id) {
+        const extras = [String(id)];
+        if (isHomeListId(id)) extras.push('default');
+        const blocked = new Set(extras);
+        const next = loadTombs().filter((item) => !blocked.has(item));
+        try { localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+        const state = hooks.getState?.();
+        if (state && Array.isArray(state.deletedListIds)) {
+            state.deletedListIds = state.deletedListIds.filter((item) => !blocked.has(String(item)));
+        }
+        return next;
+    }
+
     function tombstoneSet(state) {
         return new Set([...loadTombs(), ...((state?.deletedListIds) || [])].map(String));
     }
@@ -809,6 +822,7 @@
         lastError() { return lastError; },
         pendingInvite() { return Boolean(inviteFromLocation()); },
         rememberDeleted,
+        forgetDeleted,
         listIsDeleted,
         deletedListIds() { return loadTombs(); },
         async user() {

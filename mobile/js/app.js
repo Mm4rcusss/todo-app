@@ -220,13 +220,22 @@ document.addEventListener('DOMContentLoaded', () => {
         return '';
     }
 
+    function setBackgroundPreview(on) {
+        document.body.classList.toggle('is-previewing-bg', Boolean(on));
+        window.BitsFX?.setSaverMode?.(on ? false : Boolean(state.settings.optimizedMode));
+        applyTheme(currentList()?.theme || DEFAULT_THEME);
+        if (on) window.BitsFX?.resume?.();
+    }
+
     function openModal(modal) {
         modal.classList.remove('hidden');
         requestAnimationFrame(() => modal.classList.add('visible'));
+        if (modal === themeModal) setBackgroundPreview(true);
     }
 
     function closeModal(modal) {
         modal.classList.remove('visible');
+        if (modal === themeModal) setBackgroundPreview(false);
         setTimeout(() => modal.classList.add('hidden'), 300);
     }
 
@@ -341,6 +350,7 @@ document.addEventListener('DOMContentLoaded', () => {
         applyLayout();
         applyWindowSize();
         applyTaskScale();
+        applyPerformanceMode({ skipRestart: true });
         applyTheme(list?.theme || DEFAULT_THEME);
         renderWidgets();
         window.BitsFX?.initUI({ addBtn: null });
@@ -405,6 +415,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (shell?.window) state.settings.window = shell.window;
         if (shell?.sidebar) state.settings.sidebar = { ...(state.settings.sidebar || {}), ...shell.sidebar };
         if (shell?.taskScale != null) state.settings.taskScale = shell.taskScale;
+        if (shell && Object.prototype.hasOwnProperty.call(shell, 'loginChip')) {
+            state.settings.loginChip = shell.loginChip;
+        } else {
+            delete state.settings.loginChip;
+        }
+        state.settings.optimizedMode = Boolean(shell?.optimizedMode);
+        if (shell && Object.prototype.hasOwnProperty.call(shell, 'trash')) {
+            state.settings.trash = Array.isArray(shell.trash) ? shell.trash.slice(0, 5) : [];
+        } else {
+            delete state.settings.trash;
+        }
         if (document.body.classList.contains('orbit-mobile')) {
             if (!state.settings.sidebar) state.settings.sidebar = { side: 'left', mode: 'overlay' };
             state.settings.sidebar.mode = 'overlay';
@@ -414,6 +435,11 @@ document.addEventListener('DOMContentLoaded', () => {
     function writeLocalState() {
         const previous = parseStoredState(localStorage.getItem(STATE_KEY)) || {};
         const payload = JSON.parse(JSON.stringify(state));
+        if (payload.settings) {
+            delete payload.settings.loginChip;
+            delete payload.settings.optimizedMode;
+            delete payload.settings.trash;
+        }
         if (document.body.classList.contains('orbit-mobile') && previous.settings) {
             payload.settings = {
                 ...(payload.settings || {}),
@@ -421,6 +447,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 sidebar: previous.settings.sidebar || payload.settings?.sidebar,
                 taskScale: previous.settings.taskScale ?? payload.settings?.taskScale
             };
+            if (payload.settings) {
+                delete payload.settings.loginChip;
+                delete payload.settings.optimizedMode;
+                delete payload.settings.trash;
+            }
         }
         localStorage.setItem(STATE_KEY, JSON.stringify(payload));
         try { localStorage.removeItem(LEGACY_MOBILE_KEY); } catch { /* ignore */ }
@@ -428,9 +459,119 @@ document.addEventListener('DOMContentLoaded', () => {
             localStorage.setItem(SHELL_KEY, JSON.stringify({
                 window: state.settings.window,
                 sidebar: state.settings.sidebar,
-                taskScale: state.settings.taskScale
+                taskScale: state.settings.taskScale,
+                loginChip: state.settings.loginChip || { hidden: false },
+                optimizedMode: Boolean(state.settings.optimizedMode),
+                trash: Array.isArray(state.settings.trash) ? state.settings.trash.slice(0, 5) : []
             }));
         } catch { /* ignore */ }
+    }
+
+    function loginChipConfig() {
+        const cfg = state.settings.loginChip;
+        return cfg && typeof cfg === 'object' ? cfg : {};
+    }
+
+    function clampLoginChipPos(x, y, chip) {
+        const w = chip.offsetWidth || 120;
+        const h = chip.offsetHeight || 44;
+        const maxX = Math.max(8, window.innerWidth - w - 8);
+        const maxY = Math.max(8, window.innerHeight - h - 8);
+        return {
+            x: Math.min(maxX, Math.max(8, x)),
+            y: Math.min(maxY, Math.max(8, y))
+        };
+    }
+
+    function applyLoginChip() {
+        const chip = document.getElementById('login-chip');
+        const cfg = loginChipConfig();
+        const hidden = Boolean(cfg.hidden);
+        document.body.classList.toggle('login-chip-hidden', hidden);
+        if (chip) {
+            chip.hidden = hidden;
+            if (Number.isFinite(Number(cfg.x)) && Number.isFinite(Number(cfg.y))) {
+                const pos = clampLoginChipPos(Number(cfg.x), Number(cfg.y), chip);
+                chip.style.left = `${pos.x}px`;
+                chip.style.top = `${pos.y}px`;
+                chip.style.right = 'auto';
+                chip.style.bottom = 'auto';
+            } else {
+                chip.style.left = '';
+                chip.style.top = '';
+                chip.style.right = '';
+                chip.style.bottom = '';
+            }
+        }
+        const showBtn = document.getElementById('show-login-chip-btn');
+        if (showBtn) showBtn.hidden = !hidden;
+    }
+
+    function persistLoginChip(patch) {
+        state.settings.loginChip = { ...loginChipConfig(), ...patch };
+        applyLoginChip();
+        saveState({ skipSync: true });
+    }
+
+    function bindLoginChip() {
+        const chip = document.getElementById('login-chip');
+        if (!chip) return;
+        let dragging = false;
+        let moved = false;
+        let startX = 0;
+        let startY = 0;
+        let origX = 0;
+        let origY = 0;
+
+        chip.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('#hide-login-chip')) return;
+            dragging = true;
+            moved = false;
+            chip.dataset.dragged = '0';
+            const rect = chip.getBoundingClientRect();
+            startX = e.clientX;
+            startY = e.clientY;
+            origX = rect.left;
+            origY = rect.top;
+            chip.setPointerCapture?.(e.pointerId);
+        });
+
+        chip.addEventListener('pointermove', (e) => {
+            if (!dragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            if (!moved && (dx * dx + dy * dy) < 36) return;
+            moved = true;
+            chip.dataset.dragged = '1';
+            const pos = clampLoginChipPos(origX + dx, origY + dy, chip);
+            chip.style.left = `${pos.x}px`;
+            chip.style.top = `${pos.y}px`;
+            chip.style.right = 'auto';
+            chip.style.bottom = 'auto';
+        });
+
+        const endDrag = () => {
+            if (!dragging) return;
+            dragging = false;
+            if (moved) {
+                const rect = chip.getBoundingClientRect();
+                const pos = clampLoginChipPos(rect.left, rect.top, chip);
+                persistLoginChip({ x: pos.x, y: pos.y });
+            }
+        };
+        chip.addEventListener('pointerup', endDrag);
+        chip.addEventListener('pointercancel', endDrag);
+
+        document.getElementById('hide-login-chip')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            persistLoginChip({ hidden: true });
+        });
+        document.getElementById('show-login-chip-btn')?.addEventListener('click', () => {
+            persistLoginChip({ hidden: false });
+        });
+        window.addEventListener('resize', () => applyLoginChip());
+        applyLoginChip();
     }
 
     function loadState() {
@@ -793,6 +934,160 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function cloneJson(value) {
+        return JSON.parse(JSON.stringify(value));
+    }
+
+    const TRASH_MAX = 5;
+
+    function trashItems() {
+        if (!Array.isArray(state.settings.trash)) state.settings.trash = [];
+        return state.settings.trash;
+    }
+
+    function pushTrash(entry) {
+        const next = [entry, ...trashItems().filter((item) => item?.id !== entry.id)];
+        state.settings.trash = next.slice(0, TRASH_MAX);
+    }
+
+    function snapshotDeletedList(list) {
+        return {
+            id: uid('trash_'),
+            kind: 'list',
+            deletedAt: new Date().toISOString(),
+            name: list.name,
+            list: cloneJson(list),
+            tasks: state.tasks.filter((task) => sameId(task.listId, list.id)).map(cloneJson)
+        };
+    }
+
+    function snapshotDeletedGroup(group) {
+        return {
+            id: uid('trash_'),
+            kind: 'group',
+            deletedAt: new Date().toISOString(),
+            name: group.name,
+            group: cloneJson(group),
+            childListIds: state.lists.filter((list) => sameId(list.groupId, group.id)).map((list) => String(list.id)),
+            childGroupIds: state.groups.filter((item) => sameId(item.parentId, group.id)).map((item) => String(item.id))
+        };
+    }
+
+    function formatTrashWhen(iso) {
+        const time = Date.parse(iso);
+        if (!Number.isFinite(time)) return 'Recently';
+        return new Date(time).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+
+    function renderTrash() {
+        const root = document.getElementById('trash-list');
+        const emptyBtn = document.getElementById('empty-history-btn');
+        if (!root) return;
+        const items = trashItems();
+        root.replaceChildren();
+        if (emptyBtn) emptyBtn.hidden = !items.length;
+        if (!items.length) {
+            const empty = document.createElement('p');
+            empty.className = 'trash-empty';
+            empty.textContent = 'No deleted lists or groups yet.';
+            root.appendChild(empty);
+            return;
+        }
+        items.forEach((entry) => {
+            const row = document.createElement('div');
+            row.className = 'trash-row';
+            const kind = entry.kind === 'group' ? 'Group' : 'List';
+            const extra = entry.kind === 'list' && Array.isArray(entry.tasks)
+                ? ` · ${entry.tasks.length} task${entry.tasks.length === 1 ? '' : 's'}`
+                : '';
+            row.innerHTML = `
+                <div>
+                    <strong>${escapeHtml(entry.name || kind)}</strong>
+                    <span>${kind}${extra} · ${escapeHtml(formatTrashWhen(entry.deletedAt))}</span>
+                </div>
+            `;
+            const restore = document.createElement('button');
+            restore.type = 'button';
+            restore.textContent = 'Restore';
+            restore.addEventListener('click', () => restoreTrash(entry.id));
+            row.appendChild(restore);
+            root.appendChild(row);
+        });
+    }
+
+    function restoreTrash(entryId) {
+        const items = trashItems();
+        const index = items.findIndex((item) => item?.id === entryId);
+        if (index === -1) return;
+        const [entry] = items.splice(index, 1);
+        state.settings.trash = items;
+        if (entry.kind === 'group' && entry.group) {
+            if (!Array.isArray(state.groups)) state.groups = [];
+            if (!state.groups.some((group) => sameId(group.id, entry.group.id))) {
+                const parent = String(entry.group.parentId || '');
+                if (parent && !state.groups.some((group) => sameId(group.id, parent))) {
+                    entry.group.parentId = '';
+                }
+                state.groups.push(entry.group);
+            }
+            (entry.childListIds || []).forEach((id) => {
+                const list = state.lists.find((item) => sameId(item.id, id));
+                if (list) list.groupId = entry.group.id;
+            });
+            (entry.childGroupIds || []).forEach((id) => {
+                const group = state.groups.find((item) => sameId(item.id, id));
+                if (group) group.parentId = entry.group.id;
+            });
+            sidebarFocusGroupId = entry.group.id;
+            expandGroupPath(entry.group.id);
+            saveState();
+            renderSidebar();
+            revealSidebarItem(`.list-group-header[data-group-id="${CSS.escape(String(entry.group.id))}"]`);
+            renderTrash();
+            showNotice(`Restored group "${entry.name}".`);
+            return;
+        }
+        if (entry.kind === 'list' && entry.list) {
+            const list = entry.list;
+            if (state.lists.some((item) => sameId(item.id, list.id))) {
+                renderTrash();
+                showNotice('That list is already here.');
+                return;
+            }
+            if (list.groupId && !state.groups.some((group) => sameId(group.id, list.groupId))) {
+                list.groupId = '';
+            }
+            window.OrbitSync?.forgetDeleted?.(list.id);
+            if (isHomeList(list.id)) window.OrbitSync?.forgetDeleted?.('default');
+            state.lists.push(list);
+            (entry.tasks || []).forEach((task) => {
+                if (!state.tasks.some((item) => sameId(item.id, task.id))) state.tasks.push(task);
+            });
+            state.currentListId = list.id;
+            sidebarFocusGroupId = list.groupId || '';
+            expandGroupPath(list.groupId);
+            applyTheme(list.theme || DEFAULT_THEME);
+            saveState();
+            renderSidebar();
+            renderHeader();
+            renderTodos();
+            refreshCalendarMarkers();
+            revealSidebarItem(`.list-item[data-list-id="${CSS.escape(String(list.id))}"]`);
+            renderTrash();
+            showNotice(`Restored list "${entry.name}".`);
+        }
+    }
+
+    async function emptyTrash() {
+        if (!trashItems().length) return;
+        const confirmed = await showConfirm('Empty history? You will not be able to restore these lists or groups.');
+        if (!confirmed) return;
+        state.settings.trash = [];
+        saveState({ skipSync: true });
+        renderTrash();
+        showNotice('History emptied.');
+    }
+
     function focusedGroupId() {
         if ((state.groups || []).some((group) => sameId(group.id, sidebarFocusGroupId))) {
             return String(sidebarFocusGroupId);
@@ -857,6 +1152,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         : `Delete list "${list.name}" and all its tasks?`
                 );
                 if (!confirmed) return;
+                if (!leaving) pushTrash(snapshotDeletedList(list));
                 window.OrbitSync?.rememberDeleted?.(list.id);
                 if (isHomeList(list.id)) window.OrbitSync?.rememberDeleted?.('default');
                 if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
@@ -919,6 +1215,7 @@ document.addEventListener('DOMContentLoaded', () => {
             e.stopPropagation();
             const confirmed = await showConfirm(`Remove group "${group.name}"? Lists and groups inside stay, they just move up one level.`);
             if (!confirmed) return;
+            pushTrash(snapshotDeletedGroup(group));
             const parent = groupParentId(group);
             state.lists.forEach((list) => {
                 if (sameId(list.groupId, group.id)) list.groupId = parent;
@@ -2275,9 +2572,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function applyTheme(themeId) {
+        applyListAccent();
+        if (state.settings.optimizedMode) {
+            window.BitsFX?.stop();
+            resetBackgroundLayer();
+            backgroundLayer.style.backgroundColor = '#050816';
+            renderBitsControls();
+            renderWallpaperControls();
+            return;
+        }
+
+        if (window.BitsFX?.isBitsTheme(themeId)) {
+            resetBackgroundLayer();
+            const params = { ...window.BitsFX.getDefaults(themeId), ...(state.bitsParams[themeId] || {}) };
+            backgroundLayer.style.backgroundColor = '#050816';
+            window.BitsFX.start(themeId, backgroundLayer, params);
+            renderBitsControls();
+            renderWallpaperControls();
+            return;
+        }
+
         window.BitsFX?.stop();
         resetBackgroundLayer();
-        applyListAccent();
 
         const custom = state.customThemes.find((theme) => theme.id === themeId);
         if (custom) {
@@ -2289,15 +2605,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 applyWallpaperAdjust(themeId);
             }).catch(() => {});
             applyWallpaperAdjust(themeId);
-            renderBitsControls();
-            renderWallpaperControls();
-            return;
-        }
-
-        if (window.BitsFX?.isBitsTheme(themeId)) {
-            const params = { ...window.BitsFX.getDefaults(themeId), ...(state.bitsParams[themeId] || {}) };
-            backgroundLayer.style.backgroundColor = '#050816';
-            window.BitsFX.start(themeId, backgroundLayer, params);
             renderBitsControls();
             renderWallpaperControls();
             return;
@@ -2498,6 +2805,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('.settings-panel').forEach((panel) => {
             panel.hidden = panel.id !== `settings-panel-${id}`;
         });
+        if (id === 'history') renderTrash();
     }
 
     function bindWindowResize() {
@@ -2595,6 +2903,8 @@ document.addEventListener('DOMContentLoaded', () => {
             listColorPicker.value = list.color || DEFAULT_ACCENT;
             prefsListColorName.textContent = list.name || 'This list';
         }
+        const optimizedBox = document.getElementById('optimized-mode');
+        if (optimizedBox) optimizedBox.checked = Boolean(state.settings.optimizedMode);
     }
 
     function setCurrentListColor(color) {
@@ -2608,6 +2918,38 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let clockTimer = null;
+
+    function stopClock() {
+        clearInterval(clockTimer);
+        clockTimer = null;
+    }
+
+    function startClock() {
+        stopClock();
+        if (document.hidden || !state.settings.widgets?.clock) return;
+        const face = document.getElementById('widget-clock-face');
+        if (!face) return;
+        clockTimer = setInterval(() => {
+            const next = document.getElementById('widget-clock-face');
+            if (next) next.textContent = formatClock(new Date());
+        }, state.settings.optimizedMode ? 30000 : 1000);
+    }
+
+    function applyPerformanceMode(options = {}) {
+        const on = Boolean(state.settings.optimizedMode);
+        document.body.classList.toggle('is-optimized', on);
+        window.BitsFX?.setSaverMode?.(on);
+        const box = document.getElementById('optimized-mode');
+        if (box) box.checked = on;
+        if (options.skipRestart) return;
+        applyTheme(currentList()?.theme || DEFAULT_THEME);
+        if (on) {
+            window.OrbitPet?.stop();
+            startClock();
+            return;
+        }
+        renderWidgets();
+    }
 
     function formatClock(date) {
         return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -2813,14 +3155,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         placeDefaultWidgets();
 
-        clearInterval(clockTimer);
-        clockTimer = null;
-        if (showClock) {
-            clockTimer = setInterval(() => {
-                const face = document.getElementById('widget-clock-face');
-                if (face) face.textContent = formatClock(new Date());
-            }, 1000);
-        }
+        startClock();
 
         renderRoamPet();
     }
@@ -2869,7 +3204,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function renderRoamPet() {
         const token = ++petRenderToken;
         migratePets();
-        if (!state.settings.widgets?.pet || !state.settings.pets.length) {
+        if (state.settings.optimizedMode || !state.settings.widgets?.pet || !state.settings.pets.length) {
             window.OrbitPet?.stop();
             return;
         }
@@ -3428,10 +3763,14 @@ document.addEventListener('DOMContentLoaded', () => {
         state.groups = remote.groups || [];
         if (remote.settings) {
             state.settings = { ...state.settings, ...remote.settings };
+            delete state.settings.loginChip;
+            delete state.settings.optimizedMode;
+            delete state.settings.trash;
             if (localPets) state.settings.pets = localPets;
             if (localPetChoice) state.settings.petChoice = localPetChoice;
         }
         if (remote.bitsParams) state.bitsParams = remote.bitsParams;
+        applyShellSettings();
         readSidebarTree();
         if (state.lists.some((list) => sameId(list.id, keepCurrent))) {
             state.currentListId = keepCurrent;
@@ -3449,6 +3788,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderWidgets();
         syncLayoutModal();
         refreshAccountUi();
+        applyLoginChip();
     }
 
     function bindCloud() {
@@ -3503,6 +3843,16 @@ document.addEventListener('DOMContentLoaded', () => {
         menuBtn.addEventListener('click', toggleSidebar);
         closeSidebarBtn.addEventListener('click', () => setSidebarOpen(false));
         sidebarOverlay.addEventListener('click', () => setSidebarOpen(false));
+        document.getElementById('edit-lists-btn')?.addEventListener('click', () => {
+            const sidebar = document.getElementById('sidebar');
+            const btn = document.getElementById('edit-lists-btn');
+            const on = !sidebar.classList.contains('is-list-editing');
+            sidebar.classList.toggle('is-list-editing', on);
+            btn.setAttribute('aria-pressed', String(on));
+            btn.setAttribute('aria-label', on ? 'Done editing lists' : 'Edit lists');
+            btn.textContent = on ? 'Done' : 'Edit';
+        });
+        bindLoginChip();
 
         const openPrefs = () => {
             setPetStatus('');
@@ -3520,6 +3870,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         document.querySelectorAll('.js-open-account').forEach((btn) => {
             btn.addEventListener('click', () => {
+                const chip = document.getElementById('login-chip');
+                if (chip?.dataset.dragged === '1') {
+                    chip.dataset.dragged = '0';
+                    return;
+                }
                 closeModal(prefsModal);
                 refreshAccountUi();
                 openModal(document.getElementById('account-modal'));
@@ -3587,6 +3942,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         listResetSelect.addEventListener('change', syncResetFields);
         closeThemeModal.addEventListener('click', () => closeModal(themeModal));
+        document.getElementById('empty-history-btn')?.addEventListener('click', emptyTrash);
         bitsResetBtn.addEventListener('click', resetBitsParams);
 
         document.getElementById('sidebar-side-choices').addEventListener('click', (e) => {
@@ -3602,6 +3958,15 @@ document.addEventListener('DOMContentLoaded', () => {
         widgetClockToggle.addEventListener('change', () => setWidgetEnabled('clock', widgetClockToggle.checked));
         widgetDateToggle.addEventListener('change', () => setWidgetEnabled('date', widgetDateToggle.checked));
         widgetPetToggle.addEventListener('change', () => setWidgetEnabled('pet', widgetPetToggle.checked));
+        document.getElementById('optimized-mode')?.addEventListener('change', (e) => {
+            state.settings.optimizedMode = e.target.checked;
+            applyPerformanceMode();
+            saveState({ skipSync: true });
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) stopClock();
+            else startClock();
+        });
         WIDGET_NAMES.forEach((name) => {
             const input = document.getElementById(`widget-${name}-scale`);
             input?.addEventListener('input', () => setWidgetScale(name, Number(input.value) / 100, false));

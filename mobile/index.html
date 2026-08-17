@@ -26,6 +26,13 @@
 
 <body class="orbit-mobile">
     <div class="background-layer" id="background-layer" aria-hidden="true"></div>
+    <div id="login-chip" class="login-chip">
+        <button type="button" class="login-chip-main js-open-account">
+            <span class="account-btn-dot" hidden></span>
+            <span class="account-btn-label">Log in</span>
+        </button>
+        <button type="button" id="hide-login-chip" class="login-chip-hide" aria-label="Hide login button">×</button>
+    </div>
 
     <div class="app-wrapper sidebar-mode-overlay">
         <button type="button" id="menu-btn" class="btn-icon menu-btn" aria-label="Open lists" aria-expanded="false" aria-controls="sidebar">
@@ -41,6 +48,7 @@
         <aside class="sidebar" id="sidebar" aria-label="Lists and calendar">
             <div class="sidebar-header">
                 <h2>Lists</h2>
+                <button type="button" id="edit-lists-btn" class="sidebar-edit-toggle" aria-pressed="false" aria-label="Edit lists">Edit</button>
                 <button type="button" id="close-sidebar" class="btn-icon" aria-label="Close sidebar">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M18 6L6 18M6 6L18 18" />
@@ -132,6 +140,7 @@
     <div id="theme-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="theme-modal-title">
         <div class="modal-content">
             <h3 id="theme-modal-title">Background</h3>
+            <p class="theme-preview-hint">The list window is hidden so you can see the background. Swipe the looks, then use the sliders.</p>
             <p class="theme-section-label">Photos & gradients</p>
             <div class="theme-grid" id="theme-grid"></div>
             <p class="theme-section-label">React Bits</p>
@@ -220,6 +229,7 @@
                     <strong id="account-nav-title">Log in</strong>
                     <span id="account-nav-hint">Sync this device across phone and computer</span>
                 </button>
+                <button type="button" id="show-login-chip-btn" class="settings-link">Show login button</button>
                 <button type="button" class="settings-nav-btn" data-settings-panel="look">
                     <strong>Look</strong>
                     <span>Background and list color</span>
@@ -240,11 +250,17 @@
                     <strong>Backup</strong>
                     <span>Export or import your lists</span>
                 </button>
+                <button type="button" class="settings-nav-btn" data-settings-panel="history">
+                    <strong>History</strong>
+                    <span>Restore recently deleted lists or groups</span>
+                </button>
             </div>
             <div id="settings-panel-look" class="settings-panel" hidden>
                 <button type="button" class="settings-back-btn">← All settings</button>
                 <div class="setting-group">
                     <button type="button" id="open-theme-btn" class="settings-link">Customize background</button>
+                    <label class="check-row"><input type="checkbox" id="optimized-mode"> Optimized mode</label>
+                    <p class="setting-hint">Turns off animated backgrounds, shine, click sparks, and pets so this tab uses almost no extra memory. Use this if you keep Orbit open in the background.</p>
                 </div>
                 <div class="setting-group">
                     <label for="prefs-list-color">List color</label>
@@ -329,6 +345,15 @@
                     </label>
                     <button type="button" id="backup-restore-btn" class="settings-link" hidden>Restore my lists</button>
                     <p id="backup-restore-hint" class="setting-hint" hidden>Go back to what you had before a template or import.</p>
+                </div>
+            </div>
+            <div id="settings-panel-history" class="settings-panel" hidden>
+                <button type="button" class="settings-back-btn">← All settings</button>
+                <div class="setting-group">
+                    <label>History</label>
+                    <p class="setting-hint">Restore up to 5 lists or groups you deleted on this device.</p>
+                    <div id="trash-list" class="trash-list"></div>
+                    <button type="button" id="empty-history-btn" class="settings-link" hidden>Empty history</button>
                 </div>
             </div>
             <button type="button" id="close-prefs-modal" class="btn-primary">Done</button>

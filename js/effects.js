@@ -9,7 +9,11 @@
         { id: 'rb-orbs', name: 'Orbs', color: '#fb7185', effect: 'orbs' },
         { id: 'rb-lightning', name: 'Lightning', color: '#a78bfa', effect: 'lightning' },
         { id: 'rb-grid', name: 'Grid', color: '#38bdf8', effect: 'grid' },
-        { id: 'rb-plasma', name: 'Plasma', color: '#f472b6', effect: 'plasma' }
+        { id: 'rb-plasma', name: 'Plasma', color: '#f472b6', effect: 'plasma' },
+        { id: 'rb-prism', name: 'Prism', color: '#c4b5fd', effect: 'prism' },
+        { id: 'rb-threads', name: 'Threads', color: '#67e8f9', effect: 'threads' },
+        { id: 'rb-hyperspeed', name: 'Hyperspeed', color: '#a5b4fc', effect: 'hyperspeed' },
+        { id: 'rb-ripple', name: 'Ripple', color: '#38bdf8', effect: 'ripple' }
     ];
 
     const PARAM_DEFAULTS = {
@@ -23,7 +27,11 @@
         orbs: { color1: '#fb7185', color2: '#a78bfa', color3: '#38bdf8', speed: 1 },
         lightning: { color: '#c4b5fd', frequency: 1 },
         grid: { color: '#38bdf8', speed: 1 },
-        plasma: { speed: 1, saturation: 80, hue: 0 }
+        plasma: { speed: 1, saturation: 80, hue: 0 },
+        prism: { color1: '#c4b5fd', color2: '#22d3ee', color3: '#f472b6', speed: 1, size: 1 },
+        threads: { color: '#67e8f9', density: 1, amplitude: 1, speed: 1 },
+        hyperspeed: { color: '#a5b4fc', density: 1, speed: 1 },
+        ripple: { color: '#38bdf8', density: 1, speed: 1 }
     };
 
     const PARAM_SCHEMA = {
@@ -70,6 +78,29 @@
             { key: 'hue', type: 'range', label: 'Hue shift', min: 0, max: 360, step: 5 },
             { key: 'saturation', type: 'range', label: 'Saturation', min: 20, max: 100, step: 5 },
             { key: 'speed', type: 'range', label: 'Speed', min: 0.3, max: 3, step: 0.1 }
+        ],
+        prism: [
+            { key: 'color1', type: 'color', label: 'Facet 1' },
+            { key: 'color2', type: 'color', label: 'Facet 2' },
+            { key: 'color3', type: 'color', label: 'Facet 3' },
+            { key: 'speed', type: 'range', label: 'Spin', min: 0.3, max: 3, step: 0.1 },
+            { key: 'size', type: 'range', label: 'Size', min: 0.5, max: 1.8, step: 0.1 }
+        ],
+        threads: [
+            { key: 'color', type: 'color', label: 'Thread' },
+            { key: 'density', type: 'range', label: 'Density', min: 0.4, max: 2.2, step: 0.1 },
+            { key: 'amplitude', type: 'range', label: 'Wave', min: 0.4, max: 2.2, step: 0.1 },
+            { key: 'speed', type: 'range', label: 'Speed', min: 0.3, max: 3, step: 0.1 }
+        ],
+        hyperspeed: [
+            { key: 'color', type: 'color', label: 'Streaks' },
+            { key: 'density', type: 'range', label: 'Density', min: 0.4, max: 2.2, step: 0.1 },
+            { key: 'speed', type: 'range', label: 'Speed', min: 0.3, max: 3, step: 0.1 }
+        ],
+        ripple: [
+            { key: 'color', type: 'color', label: 'Ripple' },
+            { key: 'density', type: 'range', label: 'Rings', min: 0.4, max: 2.2, step: 0.1 },
+            { key: 'speed', type: 'range', label: 'Speed', min: 0.3, max: 3, step: 0.1 }
         ]
     };
 
@@ -78,6 +109,9 @@
     let raf = 0;
     let currentParams = {};
     let rebuildFn = null;
+    let currentEffect = '';
+    let stepFn = null;
+    let saverMode = false;
 
     function params() {
         return currentParams;
@@ -110,10 +144,16 @@
         return { w: target.width, h: target.height, dpr };
     }
 
+    function fxBlocked() {
+        return saverMode || reducedMotion || document.hidden;
+    }
+
     function stop() {
         cancelAnimationFrame(raf);
         raf = 0;
         rebuildFn = null;
+        stepFn = null;
+        currentEffect = '';
         if (active?.destroy) active.destroy();
         active = null;
         if (canvas) {
@@ -122,16 +162,38 @@
         }
     }
 
+    function resumeLoop() {
+        if (raf || !stepFn || !active || fxBlocked()) return;
+        loop(stepFn);
+    }
+
     function start(effectId, container, userParams) {
-        stop();
-        if (!container || reducedMotion) return;
+        if (!container || saverMode || reducedMotion) {
+            if (saverMode || reducedMotion) stop();
+            return;
+        }
         const theme = findTheme(effectId);
         if (!theme) return;
+        const nextParams = { ...PARAM_DEFAULTS[theme.effect], ...userParams };
+        if (active && currentEffect === theme.effect && canvas && canvas.parentElement === container) {
+            const same = JSON.stringify(currentParams) === JSON.stringify(nextParams);
+            currentParams = nextParams;
+            if (!same && typeof rebuildFn === 'function') rebuildFn();
+            resumeLoop();
+            return;
+        }
+        stop();
+        currentParams = nextParams;
+        currentEffect = theme.effect;
         const target = ensureCanvas(container);
         const engine = engines[theme.effect];
         if (!engine) return;
-        currentParams = { ...PARAM_DEFAULTS[theme.effect], ...userParams };
         active = engine(target);
+    }
+
+    function setSaverMode(on) {
+        saverMode = Boolean(on);
+        if (saverMode) stop();
     }
 
     function updateParams(partial) {
@@ -150,14 +212,16 @@
     }
 
     function loop(step) {
+        stepFn = step;
         const tick = (time) => {
-            if (document.hidden) {
-                raf = requestAnimationFrame(tick);
+            if (fxBlocked() || !stepFn) {
+                raf = 0;
                 return;
             }
-            step(time);
+            stepFn(time);
             raf = requestAnimationFrame(tick);
         };
+        cancelAnimationFrame(raf);
         raf = requestAnimationFrame(tick);
     }
 
@@ -494,6 +558,167 @@
                 ctx.drawImage(buffer, 0, 0, w, h);
             });
             return { destroy: () => window.removeEventListener('resize', onResize) };
+        },
+
+        prism(target) {
+            const ctx = target.getContext('2d');
+            const onResize = () => resizeCanvas(target);
+            onResize();
+            window.addEventListener('resize', onResize);
+            loop((time) => {
+                const p = params();
+                const { width: w, height: h } = target;
+                const t = time * 0.00035 * (Number(p.speed) || 1);
+                const size = Math.min(w, h) * (0.2 + 0.2 * (Number(p.size) || 1));
+                ctx.fillStyle = '#07060f';
+                ctx.fillRect(0, 0, w, h);
+                const cx = w * 0.5 + Math.sin(t * 0.7) * w * 0.04;
+                const cy = h * 0.5 + Math.cos(t * 0.5) * h * 0.03;
+                const colors = [p.color1, p.color2, p.color3];
+                const halo = ctx.createRadialGradient(cx, cy, size * 0.15, cx, cy, size * 1.85);
+                halo.addColorStop(0, hexAlpha(p.color1, 0.22));
+                halo.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = halo;
+                ctx.fillRect(0, 0, w, h);
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(t);
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 0; i < 3; i++) {
+                    ctx.rotate((Math.PI * 2) / 3);
+                    ctx.beginPath();
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(size * 0.18, -size);
+                    ctx.lineTo(-size * 0.58, size * 0.38);
+                    ctx.closePath();
+                    const g = ctx.createLinearGradient(0, -size, size * 0.5, size);
+                    g.addColorStop(0, hexAlpha(colors[i], 0.92));
+                    g.addColorStop(1, hexAlpha(colors[(i + 1) % 3], 0.12));
+                    ctx.fillStyle = g;
+                    ctx.fill();
+                }
+                ctx.restore();
+                ctx.globalCompositeOperation = 'source-over';
+            });
+            return { destroy: () => window.removeEventListener('resize', onResize) };
+        },
+
+        threads(target) {
+            const ctx = target.getContext('2d');
+            const onResize = () => resizeCanvas(target);
+            onResize();
+            window.addEventListener('resize', onResize);
+            loop((time) => {
+                const p = params();
+                const { width: w, height: h } = target;
+                const t = time * 0.0006 * (Number(p.speed) || 1);
+                const count = Math.round(6 + 8 * (Number(p.density) || 1));
+                const amp = h * 0.08 * (Number(p.amplitude) || 1);
+                ctx.fillStyle = '#050816';
+                ctx.fillRect(0, 0, w, h);
+                ctx.lineWidth = isCompactFx() ? 1.3 : 1.7;
+                ctx.lineJoin = 'round';
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 0; i < count; i++) {
+                    const y0 = (h / (count + 1)) * (i + 1);
+                    ctx.beginPath();
+                    for (let x = 0; x <= w; x += 8) {
+                        const y = y0
+                            + Math.sin(x * 0.008 + t * 2 + i) * amp
+                            + Math.sin(x * 0.02 - t + i * 0.7) * amp * 0.45;
+                        if (x === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.strokeStyle = hexAlpha(p.color, 0.16 + (i % 3) * 0.08);
+                    ctx.stroke();
+                }
+                ctx.globalCompositeOperation = 'source-over';
+            });
+            return { destroy: () => window.removeEventListener('resize', onResize) };
+        },
+
+        hyperspeed(target) {
+            const ctx = target.getContext('2d');
+            let stars = [];
+            const rebuild = () => {
+                const { w, h } = resizeCanvas(target);
+                const count = Math.round((isCompactFx() ? 70 : 140) * (Number(params().density) || 1));
+                stars = Array.from({ length: count }, () => ({
+                    a: Math.random() * Math.PI * 2,
+                    d: Math.random(),
+                    z: 0.25 + Math.random() * 0.75
+                }));
+            };
+            rebuild();
+            rebuildFn = rebuild;
+            window.addEventListener('resize', rebuild);
+            loop(() => {
+                const p = params();
+                const { width: w, height: h } = target;
+                const speed = 0.0045 * (Number(p.speed) || 1);
+                ctx.fillStyle = 'rgba(5, 6, 16, 0.4)';
+                ctx.fillRect(0, 0, w, h);
+                const cx = w / 2;
+                const cy = h / 2;
+                const max = Math.hypot(cx, cy);
+                ctx.strokeStyle = p.color;
+                ctx.lineWidth = 1.35;
+                stars.forEach((star) => {
+                    star.d += speed * star.z;
+                    if (star.d > 1) star.d = Math.random() * 0.08;
+                    const r = star.d * max;
+                    const r0 = Math.max(0, r - (14 + 16 * star.z));
+                    ctx.globalAlpha = Math.min(1, star.d * 1.15);
+                    ctx.beginPath();
+                    ctx.moveTo(cx + Math.cos(star.a) * r0, cy + Math.sin(star.a) * r0);
+                    ctx.lineTo(cx + Math.cos(star.a) * r, cy + Math.sin(star.a) * r);
+                    ctx.stroke();
+                });
+                ctx.globalAlpha = 1;
+            });
+            return { destroy: () => window.removeEventListener('resize', rebuild) };
+        },
+
+        ripple(target) {
+            const ctx = target.getContext('2d');
+            const onResize = () => resizeCanvas(target);
+            onResize();
+            window.addEventListener('resize', onResize);
+            loop((time) => {
+                const p = params();
+                const { width: w, height: h } = target;
+                const t = time * 0.00115 * (Number(p.speed) || 1);
+                const rings = Math.round(5 + 5 * (Number(p.density) || 1));
+                ctx.fillStyle = '#041018';
+                ctx.fillRect(0, 0, w, h);
+                const gap = isCompactFx() ? 38 : 28;
+                ctx.strokeStyle = hexAlpha(p.color, 0.08);
+                ctx.lineWidth = 1;
+                for (let x = 0; x < w; x += gap) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, h);
+                    ctx.stroke();
+                }
+                for (let y = 0; y < h; y += gap) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(w, y);
+                    ctx.stroke();
+                }
+                const cx = w / 2;
+                const cy = h / 2;
+                const max = Math.hypot(cx, cy);
+                ctx.lineWidth = 2;
+                for (let i = 0; i < rings; i++) {
+                    const prog = (i / rings + t * 0.22) % 1;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, prog * max, 0, Math.PI * 2);
+                    ctx.strokeStyle = hexAlpha(p.color, (1 - prog) * 0.55);
+                    ctx.stroke();
+                }
+            });
+            return { destroy: () => window.removeEventListener('resize', onResize) };
         }
     };
 
@@ -518,7 +743,7 @@
     }
 
     function spark(x, y) {
-        if (reducedMotion) return;
+        if (reducedMotion || saverMode) return;
         const root = document.createElement('span');
         root.className = 'click-spark';
         root.style.left = `${x}px`;
@@ -544,6 +769,7 @@
         if (!el || reducedMotion) return;
         const strength = 12;
         el.addEventListener('pointermove', (e) => {
+            if (saverMode) return;
             const rect = el.getBoundingClientRect();
             const x = ((e.clientX - rect.left) / rect.width - 0.5) * strength;
             const y = ((e.clientY - rect.top) / rect.height - 0.5) * strength;
@@ -573,10 +799,21 @@
         bindMagnet(addBtn);
     }
 
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            cancelAnimationFrame(raf);
+            raf = 0;
+            return;
+        }
+        resumeLoop();
+    });
+
     window.BitsFX = {
         themes: BITS_THEMES,
         start,
         stop,
+        setSaverMode,
+        resume: resumeLoop,
         updateParams,
         getDefaults,
         getSchema,
