@@ -95,8 +95,8 @@ body {
 /* Liquid Glass Container */
 .app-wrapper {
     display: flex;
-    width: min(96vw, calc(var(--app-width, 68) * 1vw));
-    height: min(94vh, calc(var(--app-height, 78) * 1vh));
+    width: min(96vw, calc(var(--app-width, 34) * 1vw));
+    height: min(94vh, calc(var(--app-height, 53) * 1vh));
     background: rgba(0, 0, 0, 0.4);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);

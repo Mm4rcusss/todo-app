@@ -147,8 +147,8 @@
     <div id="widget-layer" class="widget-layer" hidden></div>
 
     <div id="edit-bar" class="edit-bar" hidden>
-        <span>Edit mode</span>
-        <button type="button" id="edit-done-btn">Exit</button>
+        <span>Drag the list window or widgets</span>
+        <button type="button" id="edit-done-btn">Done</button>
     </div>
 
     <div id="toast" class="toast" hidden>
@@ -257,16 +257,12 @@
                     <span>Cloud on this device, and what to upload</span>
                 </button>
                 <button type="button" class="settings-nav-btn" data-settings-panel="look">
-                    <strong>Look</strong>
-                    <span>Background, list color, window size</span>
+                    <strong>Look & layout</strong>
+                    <span>Background, window size, menu, and arranging</span>
                 </button>
                 <button type="button" class="settings-nav-btn" data-settings-panel="widgets">
                     <strong>Widgets</strong>
                     <span>Clock, date, and GIF pets</span>
-                </button>
-                <button type="button" class="settings-nav-btn" data-settings-panel="layout">
-                    <strong>Layout</strong>
-                    <span>Menu side, task size, edit mode</span>
                 </button>
                 <button type="button" class="settings-nav-btn" data-settings-panel="templates">
                     <strong>Templates</strong>
@@ -318,59 +314,16 @@
                 <div class="setting-group window-size-group desktop-only">
                     <label>Window size</label>
                     <div class="bits-field">
-                        <label for="window-width">Width <span id="window-width-value">68%</span></label>
-                        <input type="range" id="window-width" min="28" max="96" step="1" value="68">
+                        <label for="window-width">Width <span id="window-width-value">34%</span></label>
+                        <input type="range" id="window-width" min="28" max="96" step="1" value="34">
                     </div>
                     <div class="bits-field">
-                        <label for="window-height">Height <span id="window-height-value">78%</span></label>
-                        <input type="range" id="window-height" min="40" max="94" step="1" value="78">
+                        <label for="window-height">Height <span id="window-height-value">53%</span></label>
+                        <input type="range" id="window-height" min="40" max="94" step="1" value="53">
                     </div>
                     <button type="button" id="window-reset-btn" class="btn-text">Reset size</button>
-                    <p class="setting-hint">On phones the app stays full screen. In edit mode you can also drag the window edges.</p>
-                </div>
-            </div>
-            <div id="settings-panel-widgets" class="settings-panel" hidden>
-                <button type="button" class="settings-back-btn">← All settings</button>
-                <div class="setting-group">
-                    <label>Widgets</label>
-                    <label class="check-row"><input type="checkbox" id="widget-clock"> Clock</label>
-                    <div class="bits-field widget-scale-field" data-widget-scale="clock" hidden>
-                        <label for="widget-clock-scale">Clock size <span id="widget-clock-scale-value">100%</span></label>
-                        <input type="range" id="widget-clock-scale" min="70" max="220" step="5" value="100">
-                    </div>
-                    <label class="check-row"><input type="checkbox" id="widget-date"> Date</label>
-                    <div class="bits-field widget-scale-field" data-widget-scale="date" hidden>
-                        <label for="widget-date-scale">Date size <span id="widget-date-scale-value">100%</span></label>
-                        <input type="range" id="widget-date-scale" min="70" max="220" step="5" value="100">
-                    </div>
-                    <label class="check-row"><input type="checkbox" id="widget-pet"> GIF pet</label>
-                    <div class="bits-field widget-scale-field" data-widget-scale="pet" hidden>
-                        <label for="widget-pet-scale">Pet size <span id="widget-pet-scale-value">100%</span></label>
-                        <input type="range" id="widget-pet-scale" min="70" max="220" step="5" value="100">
-                    </div>
-                    <button type="button" id="widget-reset-btn" class="btn-text">Reset widget layout</button>
-                    <p class="setting-hint desktop-only">Turn on edit mode to drag clock and date. Tap a pet type to add more; tap or drag any pet on the screen.</p>
-                </div>
-                <div class="setting-group" id="pet-upload-group" hidden>
-                    <label>Add pets</label>
-                    <p class="setting-hint">Tap a type to add another. Mix as many as you like.</p>
-                    <div class="pet-choice-grid" id="pet-choice-grid"></div>
-                    <div class="pet-roster" id="pet-roster" hidden></div>
-                    <label class="theme-upload">
-                        <input type="file" id="pet-input" accept="image/gif,image/webp,image/png,image/jpeg" hidden>
-                        <span>Upload your own GIF</span>
-                    </label>
-                    <button type="button" id="pet-remove-btn" class="btn-text">Remove uploaded GIF</button>
-                    <button type="button" id="pet-clear-btn" class="btn-text" hidden>Clear all pets</button>
-                    <p id="pet-status" class="theme-upload-status" hidden></p>
-                </div>
-            </div>
-            <div id="settings-panel-layout" class="settings-panel" hidden>
-                <button type="button" class="settings-back-btn">← All settings</button>
-                <div class="setting-group">
-                    <button type="button" id="enter-edit-btn" class="settings-link desktop-only">Enter edit mode</button>
-                    <a class="settings-link" href="./mobile/">Switch to phone view</a>
-                    <p class="setting-hint">Same lists on this browser. A layout made for iPhone.</p>
+                    <button type="button" id="enter-edit-btn" class="settings-link desktop-only">Edit window size & widget positions</button>
+                    <p class="setting-hint">On phones the app stays full screen. That button lets you drag the list window edges, and move clock, date, and pets.</p>
                 </div>
                 <div class="setting-group phone-only" id="task-scale-group">
                     <label>Task size</label>
@@ -396,6 +349,42 @@
                         <button type="button" data-mode="overlay">Float over tasks</button>
                     </div>
                     <p class="setting-hint">On phones the menu still floats so your tasks stay readable.</p>
+                </div>
+            </div>
+            <div id="settings-panel-widgets" class="settings-panel" hidden>
+                <button type="button" class="settings-back-btn">← All settings</button>
+                <div class="setting-group">
+                    <label>Widgets</label>
+                    <label class="check-row"><input type="checkbox" id="widget-clock"> Clock</label>
+                    <div class="bits-field widget-scale-field" data-widget-scale="clock" hidden>
+                        <label for="widget-clock-scale">Clock size <span id="widget-clock-scale-value">100%</span></label>
+                        <input type="range" id="widget-clock-scale" min="70" max="220" step="5" value="100">
+                    </div>
+                    <label class="check-row"><input type="checkbox" id="widget-date"> Date</label>
+                    <div class="bits-field widget-scale-field" data-widget-scale="date" hidden>
+                        <label for="widget-date-scale">Date size <span id="widget-date-scale-value">100%</span></label>
+                        <input type="range" id="widget-date-scale" min="70" max="220" step="5" value="100">
+                    </div>
+                    <label class="check-row"><input type="checkbox" id="widget-pet"> GIF pet</label>
+                    <div class="bits-field widget-scale-field" data-widget-scale="pet" hidden>
+                        <label for="widget-pet-scale">Pet size <span id="widget-pet-scale-value">100%</span></label>
+                        <input type="range" id="widget-pet-scale" min="70" max="220" step="5" value="100">
+                    </div>
+                    <button type="button" id="widget-reset-btn" class="btn-text">Reset widget layout</button>
+                    <p class="setting-hint desktop-only">Use Edit window size & widget positions in Look & layout to drag clock and date. Tap a pet type to add more; tap or drag any pet on the screen.</p>
+                </div>
+                <div class="setting-group" id="pet-upload-group" hidden>
+                    <label>Add pets</label>
+                    <p class="setting-hint">Tap a type to add another. Mix as many as you like.</p>
+                    <div class="pet-choice-grid" id="pet-choice-grid"></div>
+                    <div class="pet-roster" id="pet-roster" hidden></div>
+                    <label class="theme-upload">
+                        <input type="file" id="pet-input" accept="image/gif,image/webp,image/png,image/jpeg" hidden>
+                        <span>Upload your own GIF</span>
+                    </label>
+                    <button type="button" id="pet-remove-btn" class="btn-text">Remove uploaded GIF</button>
+                    <button type="button" id="pet-clear-btn" class="btn-text" hidden>Clear all pets</button>
+                    <p id="pet-status" class="theme-upload-status" hidden></p>
                 </div>
             </div>
             <div id="settings-panel-templates" class="settings-panel" hidden>

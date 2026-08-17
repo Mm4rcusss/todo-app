@@ -328,7 +328,7 @@ document.addEventListener('DOMContentLoaded', () => {
             pets: [],
             widgetPos: {},
             widgetViewport: true,
-            window: { width: 68, height: 78 },
+            window: { width: 34, height: 53 },
             taskScale: 1
         },
         customThemes: [],
@@ -416,6 +416,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const shell = parseStoredState(localStorage.getItem(SHELL_KEY));
         if (!state.settings) state.settings = {};
         if (shell?.window) state.settings.window = shell.window;
+        if (!shell?.usedCompactWindow) {
+            const width = Number(state.settings.window?.width);
+            const height = Number(state.settings.window?.height);
+            if (!state.settings.window || (width === 68 && height === 78)) {
+                state.settings.window = { width: 34, height: 53 };
+            }
+        }
         if (shell?.sidebar) state.settings.sidebar = { ...(state.settings.sidebar || {}), ...shell.sidebar };
         if (shell?.taskScale != null) state.settings.taskScale = shell.taskScale;
         if (shell && Object.prototype.hasOwnProperty.call(shell, 'loginChip')) {
@@ -474,6 +481,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 taskScale: state.settings.taskScale,
                 loginChip: state.settings.loginChip || { hidden: false },
                 optimizedMode: Boolean(state.settings.optimizedMode),
+                usedCompactWindow: true,
                 syncMode: state.settings.syncMode === 'off' || state.settings.syncMode === 'live' ? state.settings.syncMode : 'push',
                 syncLists: state.settings.syncLists !== false,
                 syncGroups: state.settings.syncGroups !== false,
@@ -653,9 +661,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     pos.custom = Boolean(pos.custom);
                 });
             }
-            if (!state.settings.window) state.settings.window = { width: 68, height: 78 };
-            state.settings.window.width = clamp(Number(state.settings.window.width) || 68, 28, 96);
-            state.settings.window.height = clamp(Number(state.settings.window.height) || 78, 40, 94);
+            if (!state.settings.window) state.settings.window = { width: 34, height: 53 };
+            state.settings.window.width = clamp(Number(state.settings.window.width) || 34, 28, 96);
+            state.settings.window.height = clamp(Number(state.settings.window.height) || 53, 40, 94);
             state.settings.taskScale = clamp(Number(state.settings.taskScale) || 1, 0.8, 1.5);
             if (!state.bitsParams || typeof state.bitsParams !== 'object') state.bitsParams = {};
             if (!state.wallpaperAdjust || typeof state.wallpaperAdjust !== 'object') state.wallpaperAdjust = {};
@@ -2785,7 +2793,7 @@ document.addEventListener('DOMContentLoaded', () => {
         appWrapper.classList.toggle('sidebar-mode-overlay', mode === 'overlay');
     }
 
-    const DEFAULT_WINDOW = { width: 68, height: 78 };
+    const DEFAULT_WINDOW = { width: 34, height: 53 };
     const WINDOW_LIMITS = { minW: 28, maxW: 96, minH: 40, maxH: 94 };
     const TASK_SCALE = { min: 0.8, max: 1.5, step: 0.1, def: 1 };
     const phoneLayoutMql = window.matchMedia('(max-width: 768px)');
@@ -2903,9 +2911,13 @@ document.addEventListener('DOMContentLoaded', () => {
         editBar.hidden = !editMode;
         const canResize = editMode && window.matchMedia('(min-width: 769px)').matches;
         resizeHandles.hidden = !canResize;
-        enterEditBtn.textContent = editMode ? 'Exit edit mode' : 'Enter edit mode';
+        if (enterEditBtn) {
+            enterEditBtn.textContent = editMode
+                ? 'Done arranging window & widgets'
+                : 'Edit window size & widget positions';
+        }
         document.querySelectorAll('.js-open-settings').forEach((btn) => {
-            btn.setAttribute('aria-label', editMode ? 'Open settings (edit mode on)' : 'Open settings');
+            btn.setAttribute('aria-label', editMode ? 'Open settings (arranging window and widgets)' : 'Open settings');
         });
     }
 
@@ -4168,7 +4180,7 @@ document.addEventListener('DOMContentLoaded', () => {
             renderThemeOptions();
             openModal(themeModal);
         });
-        enterEditBtn.addEventListener('click', () => {
+        enterEditBtn?.addEventListener('click', () => {
             closeModal(prefsModal);
             setEditMode(!editMode);
         });

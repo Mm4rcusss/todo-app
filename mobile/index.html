@@ -236,16 +236,12 @@
                     <span>Cloud on this device, and what to upload</span>
                 </button>
                 <button type="button" class="settings-nav-btn" data-settings-panel="look">
-                    <strong>Look</strong>
-                    <span>Background and list color</span>
+                    <strong>Look & layout</strong>
+                    <span>Background, list color, menu, and task size</span>
                 </button>
                 <button type="button" class="settings-nav-btn" data-settings-panel="widgets">
                     <strong>Widgets</strong>
                     <span>Clock, date, and GIF pets</span>
-                </button>
-                <button type="button" class="settings-nav-btn" data-settings-panel="layout">
-                    <strong>Layout</strong>
-                    <span>Menu side and task size</span>
                 </button>
                 <button type="button" class="settings-nav-btn" data-settings-panel="templates">
                     <strong>Templates</strong>
@@ -294,6 +290,23 @@
                     <p class="setting-hint" id="prefs-list-color-name"></p>
                     <input type="color" id="prefs-list-color">
                 </div>
+                <div class="setting-group" id="task-scale-group">
+                    <label for="task-scale-slider">Task size <span id="task-scale-value">100%</span></label>
+                    <input type="range" id="task-scale-slider" min="55" max="220" step="5" value="100" aria-label="Task size">
+                    <div class="scale-row">
+                        <button type="button" id="task-scale-down" aria-label="Smaller tasks">−</button>
+                        <button type="button" id="task-scale-up" aria-label="Larger tasks">+</button>
+                    </div>
+                    <button type="button" id="task-scale-reset" class="btn-text">Reset size</button>
+                    <p class="setting-hint">Drag the slider or pinch the list. Size goes from 55% to 220%.</p>
+                </div>
+                <div class="setting-group">
+                    <label>Lists menu</label>
+                    <div class="choice-row" id="sidebar-side-choices">
+                        <button type="button" data-side="left">Left</button>
+                        <button type="button" data-side="right">Right</button>
+                    </div>
+                </div>
             </div>
             <div id="settings-panel-widgets" class="settings-panel" hidden>
                 <button type="button" class="settings-back-btn">← All settings</button>
@@ -320,30 +333,6 @@
                     <button type="button" id="pet-remove-btn" class="btn-text">Remove uploaded GIF</button>
                     <button type="button" id="pet-clear-btn" class="btn-text" hidden>Clear all pets</button>
                     <p id="pet-status" class="theme-upload-status" hidden></p>
-                </div>
-            </div>
-            <div id="settings-panel-layout" class="settings-panel" hidden>
-                <button type="button" class="settings-back-btn">← All settings</button>
-                <div class="setting-group">
-                    <a class="settings-link" href="../">Switch to desktop view</a>
-                    <p class="setting-hint">Same lists on this browser.</p>
-                </div>
-                <div class="setting-group" id="task-scale-group">
-                    <label for="task-scale-slider">Task size <span id="task-scale-value">100%</span></label>
-                    <input type="range" id="task-scale-slider" min="55" max="220" step="5" value="100" aria-label="Task size">
-                    <div class="scale-row">
-                        <button type="button" id="task-scale-down" aria-label="Smaller tasks">−</button>
-                        <button type="button" id="task-scale-up" aria-label="Larger tasks">+</button>
-                    </div>
-                    <button type="button" id="task-scale-reset" class="btn-text">Reset size</button>
-                    <p class="setting-hint">Drag the slider or pinch the list. Size goes from 55% to 220%.</p>
-                </div>
-                <div class="setting-group">
-                    <label>Lists menu</label>
-                    <div class="choice-row" id="sidebar-side-choices">
-                        <button type="button" data-side="left">Left</button>
-                        <button type="button" data-side="right">Right</button>
-                    </div>
                 </div>
             </div>
             <div id="settings-panel-templates" class="settings-panel" hidden>
@@ -486,8 +475,8 @@
         <button type="button" id="edit-done-btn"></button>
         <div id="edit-bar" hidden></div>
         <div id="resize-handles" hidden></div>
-        <input id="window-width" type="range" value="68">
-        <input id="window-height" type="range" value="78">
+        <input id="window-width" type="range" value="34">
+        <input id="window-height" type="range" value="53">
         <span id="window-width-value"></span>
         <span id="window-height-value"></span>
         <button type="button" id="window-reset-btn"></button>
