@@ -10,7 +10,33 @@
     let ready = false;
     let pollTimer = 0;
     let liveChannel = null;
-    const INVITE_KEY = 'orbit_invite';
+    const TOMBSTONE_KEY = 'orbit_deleted_lists';
+
+    function loadTombs() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(TOMBSTONE_KEY) || '[]');
+            return Array.isArray(parsed) ? parsed.map(String) : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function rememberDeleted(id) {
+        const next = [...new Set([...loadTombs(), String(id)])].slice(-200);
+        try { localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+        const state = hooks.getState?.();
+        if (state) {
+            if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
+            if (!state.deletedListIds.map(String).includes(String(id))) {
+                state.deletedListIds.push(String(id));
+            }
+        }
+        return next;
+    }
+
+    function tombstoneSet(state) {
+        return new Set([...loadTombs(), ...((state?.deletedListIds) || [])].map(String));
+    }
 
     function config() {
         return global.ORBIT_SUPABASE || {};
@@ -294,7 +320,7 @@
     }
 
     function ownedLists(state, userId) {
-        const blocked = new Set((state.deletedListIds || []).map(String));
+        const blocked = tombstoneSet(state);
         return (state.lists || []).filter((list) => (
             list.role !== 'editor'
             && (!list.ownerId || String(list.ownerId) === String(userId))
@@ -375,6 +401,8 @@
         const err = listsRes.error || membersRes.error || tasksRes.error || tagsRes.error || groupsRes.error || prefsRes.error;
         if (err) throw err;
 
+        const live = hooks.getState() || local;
+        const previousSync = lastSyncAt;
         const roleByList = {};
         (membersRes.data || []).forEach((row) => {
             roleByList[row.list_id] = row.role;
@@ -395,60 +423,57 @@
             updatedAt: row.updated_at
         }));
 
-        const ownedIds = new Set(
-            (local.lists || [])
-                .filter((list) => list.role !== 'editor')
-                .map((list) => String(list.id))
-        );
+        const deletedLists = tombstoneSet(live);
+        const deleted = new Set((live.deletedTaskIds || []).map(String));
         const remoteIds = new Set(remoteLists.map((list) => String(list.id)));
-        const deletedLists = new Set((local.deletedListIds || []).map(String));
-        const deleted = new Set((local.deletedTaskIds || []).map(String));
 
-        const lists = mergeById(
-            (local.lists || []).filter((list) => list.role === 'editor' || ownedIds.has(String(list.id))),
-            remoteLists
-        ).filter((list) => {
-            if (deletedLists.has(String(list.id))) return false;
-            return remoteIds.has(String(list.id)) || list.role !== 'editor';
+        const lists = mergeById(live.lists || [], remoteLists).filter((list) => {
+            const id = String(list.id);
+            if (deletedLists.has(id)) return false;
+            if (remoteIds.has(id)) return true;
+            if (list.role === 'editor') return false;
+            return !list.ownerId;
         });
 
-        const previousSync = lastSyncAt;
         const remoteTaskIds = new Set(remoteTasks.map((task) => String(task.id)));
         const listIds = new Set(lists.map((list) => String(list.id)));
-        const tasks = mergeById(local.tasks || [], remoteTasks).filter((task) => {
+        const tasks = mergeById(live.tasks || [], remoteTasks).filter((task) => {
             const id = String(task.id);
             if (!listIds.has(String(task.listId)) || deleted.has(id) || deletedLists.has(String(task.listId))) return false;
             if (remoteTaskIds.has(id)) return true;
             return !previousSync || stamp(task.updatedAt) >= stamp(previousSync);
         });
-        const tags = mergeById(local.tags || [], remoteTags);
-        const groups = mergeById(local.groups || [], remoteGroups);
+        const tags = mergeById(live.tags || [], remoteTags);
+        const groups = mergeById(live.groups || [], remoteGroups);
 
         const prefs = prefsRes.data;
-        let settings = local.settings;
-        let bitsParams = local.bitsParams;
-        let currentListId = local.currentListId;
-        if (prefs && stamp(prefs.updated_at) >= stamp(local.settings?.updatedAt)) {
-            const localPets = local.settings?.pets;
-            const localPetChoice = local.settings?.petChoice;
-            settings = { ...(local.settings || {}), ...(prefs.settings || {}), updatedAt: prefs.updated_at };
+        let settings = live.settings;
+        let bitsParams = live.bitsParams;
+        let currentListId = live.currentListId;
+        if (prefs && stamp(prefs.updated_at) >= stamp(live.settings?.updatedAt)) {
+            const localPets = live.settings?.pets;
+            const localPetChoice = live.settings?.petChoice;
+            settings = { ...(live.settings || {}), ...(prefs.settings || {}), updatedAt: prefs.updated_at };
             if (localPets) settings.pets = localPets;
             if (localPetChoice) settings.petChoice = localPetChoice;
             bitsParams = prefs.bits_params && typeof prefs.bits_params === 'object' ? prefs.bits_params : bitsParams;
-            if (prefs.current_list_id && !deletedLists.has(String(prefs.current_list_id))) currentListId = prefs.current_list_id;
+            if (prefs.current_list_id && !deletedLists.has(String(prefs.current_list_id))) {
+                currentListId = prefs.current_list_id;
+            }
         }
 
         const cloudState = { lists, tasks, currentListId };
         ensureHomeListId(cloudState, user.id);
+        cloudState.lists = (cloudState.lists || []).filter((list) => !deletedLists.has(String(list.id)));
+        cloudState.tasks = (cloudState.tasks || []).filter((task) => (
+            !deletedLists.has(String(task.listId)) && listIds.has(String(task.listId))
+        ));
+        if (deletedLists.has(String(cloudState.currentListId))) {
+            cloudState.currentListId = cloudState.lists[0]?.id || live.currentListId;
+        }
 
         lastSyncAt = nowIso();
         lastError = '';
-        const live = hooks.getState?.();
-        if (live) {
-            const stillThere = new Set(remoteLists.map((list) => String(list.id)));
-            live.deletedListIds = (live.deletedListIds || []).filter((id) => stillThere.has(String(id)));
-            hooks.persistLocal?.();
-        }
         hooks.applyCloud({
             lists: cloudState.lists,
             tasks: cloudState.tasks,
@@ -534,7 +559,7 @@
             if (error) throw error;
         }
 
-        const removedLists = (state.deletedListIds || []).map(String).filter(Boolean);
+        const removedLists = [...tombstoneSet(state)];
         if (removedLists.length) {
             const { error: listDeleteError } = await sb.from('lists')
                 .delete()
@@ -722,6 +747,8 @@
         lastSyncAt() { return lastSyncAt; },
         lastError() { return lastError; },
         pendingInvite() { return Boolean(inviteFromLocation()); },
+        rememberDeleted,
+        deletedListIds() { return loadTombs(); },
         async user() {
             return sessionUser();
         },
@@ -834,12 +861,14 @@
             }
         },
         async leaveList(listId) {
+            rememberDeleted(listId);
             const sb = await getClient();
             if (!sb) return;
             const { error } = await sb.rpc('leave_shared_list', { p_list_id: String(listId) });
             if (error) throw error;
         },
         async removeList(listId) {
+            rememberDeleted(listId);
             const sb = await getClient();
             const user = await sessionUser();
             if (!sb || !user || !listId) return;

@@ -633,6 +633,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         : `Delete list "${list.name}" and all its tasks?`
                 );
                 if (!confirmed) return;
+                window.OrbitSync?.rememberDeleted?.(list.id);
                 if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
                 state.deletedListIds.push(String(list.id));
                 state.lists = state.lists.filter((item) => !sameId(item.id, list.id));
@@ -2820,7 +2821,10 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyCloudState(remote) {
         const localPets = state.settings?.pets;
         const localPetChoice = state.settings?.petChoice;
-        const gone = new Set((state.deletedListIds || []).map(String));
+        const gone = new Set([
+            ...(state.deletedListIds || []),
+            ...(window.OrbitSync?.deletedListIds?.() || [])
+        ].map(String));
         const goneTasks = new Set((state.deletedTaskIds || []).map(String));
         state.lists = (remote.lists || []).filter((list) => !gone.has(String(list.id)));
         state.tasks = (remote.tasks || []).filter((task) => (
