@@ -317,6 +317,7 @@ document.addEventListener('DOMContentLoaded', () => {
         groups: [],
         deletedTaskIds: [],
         deletedListIds: [],
+        deletedGroupIds: [],
         currentDate: todayLocal(),
         viewDate: todayLocal(),
         settings: {
@@ -399,6 +400,7 @@ document.addEventListener('DOMContentLoaded', () => {
             groups: mergeItemsById(primary.groups, secondary.groups),
             deletedTaskIds: [...new Set([...(primary.deletedTaskIds || []), ...(secondary.deletedTaskIds || [])].map(String))],
             deletedListIds: [...new Set([...(primary.deletedListIds || []), ...(secondary.deletedListIds || [])].map(String))],
+            deletedGroupIds: [...new Set([...(primary.deletedGroupIds || []), ...(secondary.deletedGroupIds || [])].map(String))],
             settings: { ...(secondary.settings || {}), ...(primary.settings || {}) }
         };
     }
@@ -587,12 +589,20 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!Array.isArray(state.groups)) state.groups = [];
             if (!Array.isArray(state.deletedTaskIds)) state.deletedTaskIds = [];
             if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
+            if (!Array.isArray(state.deletedGroupIds)) state.deletedGroupIds = [];
             const goneLists = new Set([
                 ...state.deletedListIds,
                 ...(window.OrbitSync?.deletedListIds?.() || [])
             ].map(String));
             state.lists = state.lists.filter((list) => !(
                 window.OrbitSync?.listIsDeleted?.(list.id, goneLists) || goneLists.has(String(list.id))
+            ));
+            const goneGroups = new Set([
+                ...state.deletedGroupIds,
+                ...(window.OrbitSync?.deletedGroupIds?.() || [])
+            ].map(String));
+            state.groups = state.groups.filter((group) => !(
+                window.OrbitSync?.groupIsDeleted?.(group.id, goneGroups) || goneGroups.has(String(group.id))
             ));
             if (!state.settings) state.settings = {};
             if (!state.settings.sortBy) state.settings.sortBy = 'custom';
@@ -1023,6 +1033,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const [entry] = items.splice(index, 1);
         state.settings.trash = items;
         if (entry.kind === 'group' && entry.group) {
+            window.OrbitSync?.forgetDeletedGroup?.(entry.group.id);
             if (!Array.isArray(state.groups)) state.groups = [];
             if (!state.groups.some((group) => sameId(group.id, entry.group.id))) {
                 const parent = String(entry.group.parentId || '');
@@ -1217,6 +1228,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const confirmed = await showConfirm(`Remove group "${group.name}"? Lists and groups inside stay, they just move up one level.`);
             if (!confirmed) return;
             pushTrash(snapshotDeletedGroup(group));
+            window.OrbitSync?.rememberDeletedGroup?.(group.id);
+            if (!Array.isArray(state.deletedGroupIds)) state.deletedGroupIds = [];
+            state.deletedGroupIds.push(String(group.id));
             const parent = groupParentId(group);
             state.lists.forEach((list) => {
                 if (sameId(list.groupId, group.id)) list.groupId = parent;
@@ -3733,6 +3747,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const blocked = (id) => (
             window.OrbitSync?.listIsDeleted?.(id, gone) || gone.has(String(id))
         );
+        const goneGroups = new Set([
+            ...(state.deletedGroupIds || []),
+            ...(window.OrbitSync?.deletedGroupIds?.() || [])
+        ].map(String));
+        const blockedGroup = (id) => (
+            window.OrbitSync?.groupIsDeleted?.(id, goneGroups) || goneGroups.has(String(id))
+        );
         const goneTasks = new Set((state.deletedTaskIds || []).map(String));
         const keepCurrent = state.currentListId;
         state.lists = (remote.lists || []).filter((list) => !blocked(list.id));
@@ -3740,7 +3761,7 @@ document.addEventListener('DOMContentLoaded', () => {
             !blocked(task.listId) && !goneTasks.has(String(task.id))
         ));
         state.tags = remote.tags;
-        state.groups = remote.groups || [];
+        state.groups = (remote.groups || []).filter((group) => !blockedGroup(group.id));
         if (remote.settings) {
             state.settings = { ...state.settings, ...remote.settings };
             delete state.settings.loginChip;
