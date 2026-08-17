@@ -27,6 +27,11 @@
 <body>
     <div class="background-layer" id="background-layer" aria-hidden="true"></div>
 
+    <button type="button" id="prefs-btn" class="chrome-btn chrome-settings desktop-only js-open-settings" aria-label="Open settings">
+        Settings
+        <span class="chrome-login-hint">Log in</span>
+    </button>
+
     <div class="app-wrapper sidebar-mode-dock">
         <button type="button" id="menu-btn" class="btn-icon menu-btn" aria-label="Open lists" aria-expanded="false" aria-controls="sidebar">
             <svg class="icon-dots" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -38,10 +43,6 @@
                 <path d="M18 6L6 18M6 6L18 18" />
             </svg>
         </button>
-        <button type="button" id="account-btn" class="account-btn" aria-label="Log in" aria-haspopup="dialog">
-            <span class="account-btn-dot" hidden></span>
-            <span class="account-btn-label">Log in</span>
-        </button>
         <aside class="sidebar" id="sidebar" aria-label="Lists and calendar">
             <div class="sidebar-header">
                 <h2>Lists</h2>
@@ -51,11 +52,37 @@
                     </svg>
                 </button>
             </div>
+            <div class="sidebar-toolbar">
+                <button type="button" id="add-new-btn" class="add-new-btn phone-only" aria-expanded="false" aria-controls="add-new-menu">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.12-1.6A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z" />
+                        <path d="M12 11v6M9 14h6" />
+                    </svg>
+                    Add new
+                </button>
+                <div id="add-new-menu" class="add-new-menu">
+                    <button type="button" id="add-list-btn" class="sidebar-add-btn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+                        </svg>
+                        List
+                    </button>
+                    <button type="button" id="add-group-btn" class="sidebar-add-btn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.12-1.6A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z" />
+                            <path d="M12 11v6M9 14h6" />
+                        </svg>
+                        Group
+                    </button>
+                </div>
+            </div>
             <ul class="lists-nav" id="lists-nav"></ul>
-            <button type="button" id="add-list-btn" class="btn-text">+ New List</button>
-            <button type="button" id="add-group-btn" class="btn-text">+ New group</button>
             <p class="sidebar-hint">Drag a list onto a group to file it.</p>
-            <button type="button" id="prefs-btn" class="sidebar-settings-btn">Settings</button>
+            <button type="button" class="sidebar-account-link phone-only js-open-account">
+                <span class="account-btn-dot" hidden></span>
+                <span class="account-btn-label">Log in</span>
+            </button>
+            <button type="button" class="sidebar-settings-btn phone-only js-open-settings">Settings</button>
 
             <div class="sidebar-footer">
                 <div class="calendar-mini" id="calendar-mini"></div>
@@ -95,7 +122,6 @@
 
             <div class="app-footer">
                 <span id="items-left">0 items left</span>
-                <a class="btn-text" href="./mobile/">Phone view</a>
                 <button type="button" id="clear-completed" class="btn-text">Clear Completed</button>
             </div>
         </main>
@@ -179,7 +205,7 @@
     <div id="account-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
         <div class="modal-content">
             <h3 id="account-modal-title">Account</h3>
-            <p class="setting-hint" id="account-hint">Sign in to sync across devices and share a list.</p>
+            <p class="setting-hint" id="account-hint">Sign in to sync across devices and share a list. If you already created an account, tap Log in — creating it again sends another email.</p>
             <div id="account-signed-out">
                 <div class="setting-group">
                     <label for="account-email">Email</label>
@@ -210,6 +236,10 @@
             <h3 id="prefs-modal-title">Settings</h3>
             <div id="settings-home" class="settings-home">
                 <p class="setting-hint">Pick what you want to change.</p>
+                <button type="button" class="settings-nav-btn js-open-account" id="account-btn">
+                    <strong id="account-nav-title">Log in</strong>
+                    <span id="account-nav-hint">Sync this device across phone and computer</span>
+                </button>
                 <button type="button" class="settings-nav-btn" data-settings-panel="look">
                     <strong>Look</strong>
                     <span>Background, list color, window size</span>
@@ -296,6 +326,7 @@
                 <div class="setting-group">
                     <button type="button" id="enter-edit-btn" class="settings-link desktop-only">Enter edit mode</button>
                     <a class="settings-link" href="./mobile/">Switch to phone view</a>
+                    <p class="setting-hint">Same lists on this browser. A layout made for iPhone.</p>
                 </div>
                 <div class="setting-group phone-only" id="task-scale-group">
                     <label>Task size</label>

@@ -95,6 +95,14 @@
         return text || 'Sync failed';
     }
 
+    function formatAuthError(err) {
+        const text = `${err?.message || ''} ${err?.code || ''} ${err?.status || ''}`;
+        if (/rate.?limit|over_email_send_rate_limit|email_send|too many requests|429/i.test(text)) {
+            return 'Too many emails just now. Wait a few minutes, then tap Log in with your password. Don’t tap Create account or Send sign-in link again — those send another email.';
+        }
+        return err?.message || 'Something went wrong.';
+    }
+
     function isOnConflictMismatch(err) {
         const code = String(err?.code || '');
         const text = `${err?.message || ''} ${err?.details || ''} ${err?.hint || ''}`;
@@ -796,6 +804,7 @@
     const OrbitSync = {
         isConfigured,
         isHomeListId,
+        formatAuthError,
         lastSyncAt() { return lastSyncAt; },
         lastError() { return lastError; },
         pendingInvite() { return Boolean(inviteFromLocation()); },

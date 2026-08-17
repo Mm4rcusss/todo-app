@@ -16,7 +16,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const sidebarOverlay = document.getElementById('sidebar-overlay');
     const closeSidebarBtn = document.getElementById('close-sidebar');
     const appWrapper = document.querySelector('.app-wrapper');
-    const prefsBtn = document.getElementById('prefs-btn');
     const prefsModal = document.getElementById('prefs-modal');
     const closePrefsModal = document.getElementById('close-prefs-modal');
     const openThemeBtn = document.getElementById('open-theme-btn');
@@ -58,6 +57,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const PET_MEDIA_KEY = 'widget_pet';
     const PET_ASSET_BASE = './assets/pets/';
     const STATE_KEY = 'nanobanana_state';
+    const LEGACY_MOBILE_KEY = 'orbit_mobile_state';
+    const SHELL_KEY = document.body.classList.contains('orbit-mobile') ? 'orbit_shell_mobile' : 'orbit_shell_desktop';
     let petRenderToken = 0;
     const backgroundLayer = document.querySelector('.background-layer');
     const confirmModal = document.getElementById('confirm-modal');
@@ -349,12 +350,95 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentList() && !window.matchMedia('(pointer: coarse)').matches) todoInput.focus();
     }
 
+    function parseStoredState(raw) {
+        if (!raw) return null;
+        try {
+            const value = JSON.parse(raw);
+            return value && typeof value === 'object' ? value : null;
+        } catch {
+            return null;
+        }
+    }
+
+    function mergeItemsById(a, b) {
+        const map = new Map();
+        [...(a || []), ...(b || [])].forEach((item) => {
+            if (!item?.id) return;
+            const id = String(item.id);
+            const current = map.get(id);
+            if (!current) {
+                map.set(id, item);
+                return;
+            }
+            const nextTime = Date.parse(item.updatedAt) || 0;
+            const currentTime = Date.parse(current.updatedAt) || 0;
+            map.set(id, nextTime >= currentTime ? { ...current, ...item } : { ...item, ...current });
+        });
+        return [...map.values()];
+    }
+
+    function mergeLocalSaves(primary, secondary) {
+        if (!primary) return secondary;
+        if (!secondary) return primary;
+        return {
+            ...secondary,
+            ...primary,
+            lists: mergeItemsById(primary.lists, secondary.lists),
+            tasks: mergeItemsById(primary.tasks, secondary.tasks),
+            tags: mergeItemsById(primary.tags, secondary.tags),
+            groups: mergeItemsById(primary.groups, secondary.groups),
+            deletedTaskIds: [...new Set([...(primary.deletedTaskIds || []), ...(secondary.deletedTaskIds || [])].map(String))],
+            deletedListIds: [...new Set([...(primary.deletedListIds || []), ...(secondary.deletedListIds || [])].map(String))],
+            settings: { ...(secondary.settings || {}), ...(primary.settings || {}) }
+        };
+    }
+
+    function readSharedState() {
+        return mergeLocalSaves(
+            parseStoredState(localStorage.getItem(STATE_KEY)),
+            parseStoredState(localStorage.getItem(LEGACY_MOBILE_KEY))
+        );
+    }
+
+    function applyShellSettings() {
+        const shell = parseStoredState(localStorage.getItem(SHELL_KEY));
+        if (!state.settings) state.settings = {};
+        if (shell?.window) state.settings.window = shell.window;
+        if (shell?.sidebar) state.settings.sidebar = { ...(state.settings.sidebar || {}), ...shell.sidebar };
+        if (shell?.taskScale != null) state.settings.taskScale = shell.taskScale;
+        if (document.body.classList.contains('orbit-mobile')) {
+            if (!state.settings.sidebar) state.settings.sidebar = { side: 'left', mode: 'overlay' };
+            state.settings.sidebar.mode = 'overlay';
+        }
+    }
+
+    function writeLocalState() {
+        const previous = parseStoredState(localStorage.getItem(STATE_KEY)) || {};
+        const payload = JSON.parse(JSON.stringify(state));
+        if (document.body.classList.contains('orbit-mobile') && previous.settings) {
+            payload.settings = {
+                ...(payload.settings || {}),
+                window: previous.settings.window || payload.settings?.window,
+                sidebar: previous.settings.sidebar || payload.settings?.sidebar,
+                taskScale: previous.settings.taskScale ?? payload.settings?.taskScale
+            };
+        }
+        localStorage.setItem(STATE_KEY, JSON.stringify(payload));
+        try { localStorage.removeItem(LEGACY_MOBILE_KEY); } catch { /* ignore */ }
+        try {
+            localStorage.setItem(SHELL_KEY, JSON.stringify({
+                window: state.settings.window,
+                sidebar: state.settings.sidebar,
+                taskScale: state.settings.taskScale
+            }));
+        } catch { /* ignore */ }
+    }
+
     function loadState() {
-        const raw = localStorage.getItem('nanobanana_state');
-        if (!raw) return;
+        const saved = readSharedState();
+        if (!saved) return;
 
         try {
-            const saved = JSON.parse(raw);
             state = { ...state, ...saved };
             if (!Array.isArray(state.lists)) state.lists = [];
             if (!Array.isArray(state.tasks)) state.tasks = [];
@@ -436,12 +520,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!list.resetFrequency) list.resetFrequency = 'none';
                 if (!list.groupId) list.groupId = '';
                 if (list.role !== 'editor') list.role = 'owner';
+                if (!Number.isFinite(Number(list.sort))) list.sort = 0;
                 list.reset = normalizeReset(list);
             });
+            readSidebarTree();
+            sidebarFocusGroupId = currentList()?.groupId || '';
             state.tasks.forEach((task, index) => {
                 if (task.order === undefined) task.order = index;
                 if (!task.tags) task.tags = [];
             });
+            applyShellSettings();
             saveState({ skipSync: true });
         } catch {
             console.warn('Saved data was unreadable; starting with a fresh list.');
@@ -449,8 +537,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const fingerprints = new Map();
-    let listDrag = null;
     let skipListClick = false;
+    let sidebarFocusGroupId = '';
 
     function itemFingerprint(item) {
         if (!item || typeof item !== 'object') return '';
@@ -486,10 +574,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function saveState(options = {}) {
+        writeSidebarTree();
         if (options.skipSync) rememberFingerprints();
         else stampDirtyItems();
         try {
-            localStorage.setItem('nanobanana_state', JSON.stringify(state));
+            writeLocalState();
         } catch (err) {
             console.warn('Could not save tasks.', err);
         }
@@ -604,13 +693,129 @@ document.addEventListener('DOMContentLoaded', () => {
         if (inviteBtn) inviteBtn.hidden = document.getElementById('cloud-actions')?.hidden || list.role === 'editor';
     }
 
-    function renderListRow(list, inGroup) {
+    function groupParentId(group) {
+        const parent = String(group?.parentId || '');
+        if (!parent || sameId(parent, group?.id)) return '';
+        if (!(state.groups || []).some((item) => sameId(item.id, parent))) return '';
+        return parent;
+    }
+
+    function isInsideGroup(nodeId, ancestorId) {
+        let current = String(nodeId || '');
+        const seen = new Set();
+        while (current) {
+            if (sameId(current, ancestorId)) return true;
+            if (seen.has(current)) return false;
+            seen.add(current);
+            const group = (state.groups || []).find((item) => sameId(item.id, current));
+            current = groupParentId(group);
+        }
+        return false;
+    }
+
+    function readSidebarTree() {
+        const tree = state.settings?.sidebarTree || { groups: {}, lists: {} };
+        (state.groups || []).forEach((group, index) => {
+            const meta = tree.groups?.[String(group.id)] || {};
+            group.parentId = String(meta.parentId || '');
+            group.collapsed = Boolean(meta.collapsed);
+            group.sort = Number.isFinite(Number(meta.sort)) ? Number(meta.sort) : (Number(group.sort) || index);
+        });
+        (state.lists || []).forEach((list, index) => {
+            const meta = tree.lists?.[String(list.id)] || {};
+            if (!list.groupId) list.groupId = '';
+            list.sort = Number.isFinite(Number(meta.sort)) ? Number(meta.sort) : (Number(list.sort) || index);
+        });
+        (state.groups || []).forEach((group) => {
+            if (isInsideGroup(group.parentId, group.id)) group.parentId = '';
+            group.parentId = groupParentId(group);
+        });
+    }
+
+    function writeSidebarTree() {
+        if (!state.settings) state.settings = {};
+        const groups = {};
+        const lists = {};
+        (state.groups || []).forEach((group) => {
+            groups[String(group.id)] = {
+                parentId: String(group.parentId || ''),
+                collapsed: Boolean(group.collapsed),
+                sort: Number(group.sort) || 0
+            };
+        });
+        (state.lists || []).forEach((list) => {
+            lists[String(list.id)] = { sort: Number(list.sort) || 0 };
+        });
+        state.settings.sidebarTree = { groups, lists };
+    }
+
+    function treeChildren(parentId) {
+        const pid = String(parentId || '');
+        const knownGroups = new Set((state.groups || []).map((group) => String(group.id)));
+        const groups = (state.groups || [])
+            .filter((group) => groupParentId(group) === pid)
+            .map((group) => ({ kind: 'group', item: group, sort: Number(group.sort) || 0, name: group.name || '' }));
+        const lists = (state.lists || [])
+            .filter((list) => {
+                const gid = String(list.groupId || '');
+                if (!pid) return !gid || !knownGroups.has(gid);
+                return sameId(gid, pid);
+            })
+            .map((list) => ({ kind: 'list', item: list, sort: Number(list.sort) || 0, name: list.name || '' }));
+        return [...groups, ...lists].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+    }
+
+    function nextTreeSort(parentId) {
+        const kids = treeChildren(parentId);
+        return kids.length ? Math.max(...kids.map((node) => Number(node.sort) || 0)) + 1 : 0;
+    }
+
+    function expandGroupPath(groupId) {
+        let current = String(groupId || '');
+        const seen = new Set();
+        while (current) {
+            const group = (state.groups || []).find((item) => sameId(item.id, current));
+            if (!group || seen.has(current)) break;
+            seen.add(current);
+            group.collapsed = false;
+            current = groupParentId(group);
+        }
+    }
+
+    function revealSidebarItem(selector) {
+        setSidebarOpen(true);
+        renderSidebar();
+        requestAnimationFrame(() => {
+            const el = listsNav.querySelector(selector);
+            if (!el) return;
+            el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            el.classList.add('sidebar-flash');
+            el.addEventListener('animationend', () => el.classList.remove('sidebar-flash'), { once: true });
+        });
+    }
+
+    function focusedGroupId() {
+        if ((state.groups || []).some((group) => sameId(group.id, sidebarFocusGroupId))) {
+            return String(sidebarFocusGroupId);
+        }
+        const list = currentList();
+        const gid = String(list?.groupId || '');
+        return (state.groups || []).some((group) => sameId(group.id, gid)) ? gid : '';
+    }
+
+    function renderListRow(list, depth) {
         const li = document.createElement('li');
-        li.className = `list-item${sameId(list.id, state.currentListId) ? ' active' : ''}${inGroup ? ' in-group' : ''}`;
+        li.className = `list-item${sameId(list.id, state.currentListId) ? ' active' : ''}${depth ? ' in-group' : ''}`;
+        li.style.setProperty('--depth', String(depth || 0));
         li.dataset.listId = String(list.id);
+        li.dataset.kind = 'list';
+        li.dataset.id = String(list.id);
+        li.dataset.parent = String(list.groupId || '');
+        li.dataset.depth = String(depth || 0);
         const sharedMark = list.role === 'editor' ? ' <span class="list-shared">shared</span>' : '';
         li.innerHTML = `
             <div class="list-info">
+                <span class="tree-indent" aria-hidden="true"></span>
                 <span class="list-drag-handle" aria-hidden="true">⋮⋮</span>
                 <span class="list-dot" style="background-color: ${escapeHtml(list.color || DEFAULT_ACCENT)};"></span>
                 <span class="list-name">${escapeHtml(list.name)}${sharedMark}</span>
@@ -622,17 +827,19 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         li.addEventListener('click', (e) => {
-            if (e.target.closest('.btn-icon-small')) return;
+            if (e.target.closest('.btn-icon-small, .list-drag-handle')) return;
             if (skipListClick) {
                 skipListClick = false;
                 return;
             }
             state.currentListId = list.id;
+            sidebarFocusGroupId = list.groupId || '';
             applyTheme(list.theme || DEFAULT_THEME);
             saveState();
             renderSidebar();
             renderHeader();
             renderTodos();
+            if (isPhoneLayout() || document.body.classList.contains('orbit-mobile')) setSidebarOpen(false);
         });
 
         li.querySelector('.settings-list-btn').addEventListener('click', (e) => {
@@ -674,41 +881,75 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         }
-        bindSidebarListDrag(li, list);
+        bindTreeDrag(li);
         return li;
+    }
+
+    function renderGroupRow(group, depth) {
+        const collapsed = Boolean(group.collapsed);
+        const header = document.createElement('li');
+        header.className = `list-group-header${collapsed ? ' is-collapsed' : ' is-expanded'}${sameId(sidebarFocusGroupId, group.id) ? ' is-focused' : ''}`;
+        header.style.setProperty('--depth', String(depth || 0));
+        header.dataset.groupId = String(group.id);
+        header.dataset.kind = 'group';
+        header.dataset.id = String(group.id);
+        header.dataset.parent = groupParentId(group);
+        header.dataset.depth = String(depth || 0);
+        header.dataset.expanded = collapsed ? 'false' : 'true';
+        header.innerHTML = `
+            <div class="tree-row">
+                <span class="tree-indent" aria-hidden="true"></span>
+                <span class="list-drag-handle" aria-hidden="true">⋮⋮</span>
+                <span class="tree-chevron" aria-hidden="true">${collapsed ? '>' : 'v'}</span>
+                <span class="tree-name">${escapeHtml(group.name)}</span>
+            </div>
+            <button type="button" class="btn-icon-small delete-group-btn" title="Remove group" aria-label="Remove group">×</button>
+        `;
+        header.addEventListener('click', (e) => {
+            if (e.target.closest('.btn-icon-small, .list-drag-handle')) return;
+            if (skipListClick) {
+                skipListClick = false;
+                return;
+            }
+            group.collapsed = !group.collapsed;
+            sidebarFocusGroupId = group.id;
+            saveState();
+            renderSidebar();
+        });
+        header.querySelector('.delete-group-btn').addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const confirmed = await showConfirm(`Remove group "${group.name}"? Lists and groups inside stay, they just move up one level.`);
+            if (!confirmed) return;
+            const parent = groupParentId(group);
+            state.lists.forEach((list) => {
+                if (sameId(list.groupId, group.id)) list.groupId = parent;
+            });
+            state.groups.forEach((item) => {
+                if (sameId(item.parentId, group.id)) item.parentId = parent;
+            });
+            state.groups = state.groups.filter((item) => !sameId(item.id, group.id));
+            if (sameId(sidebarFocusGroupId, group.id)) sidebarFocusGroupId = parent;
+            saveState();
+            renderSidebar();
+        });
+        bindTreeDrag(header);
+        return header;
+    }
+
+    function appendTree(parentId, depth) {
+        treeChildren(parentId).forEach((node) => {
+            if (node.kind === 'group') {
+                listsNav.appendChild(renderGroupRow(node.item, depth));
+                if (!node.item.collapsed) appendTree(node.item.id, depth + 1);
+            } else {
+                listsNav.appendChild(renderListRow(node.item, depth));
+            }
+        });
     }
 
     function renderSidebar() {
         listsNav.replaceChildren();
-        const groups = [...(state.groups || [])].sort((a, b) => (a.sort || 0) - (b.sort || 0));
-        const groupedIds = new Set(groups.map((group) => group.id));
-        const ungrouped = state.lists.filter((list) => !list.groupId || !groupedIds.has(list.groupId));
-        ungrouped.forEach((list) => listsNav.appendChild(renderListRow(list, false)));
-
-        groups.forEach((group) => {
-            const header = document.createElement('li');
-            header.className = 'list-group-header';
-            header.dataset.groupId = String(group.id);
-            header.innerHTML = `
-                <span>${escapeHtml(group.name)}</span>
-                <button type="button" class="btn-icon-small delete-group-btn" title="Remove group" aria-label="Remove group">×</button>
-            `;
-            header.querySelector('.delete-group-btn').addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const confirmed = await showConfirm(`Remove group "${group.name}"? Lists stay, they just move out.`);
-                if (!confirmed) return;
-                state.lists.forEach((list) => {
-                    if (sameId(list.groupId, group.id)) list.groupId = '';
-                });
-                state.groups = state.groups.filter((item) => !sameId(item.id, group.id));
-                saveState();
-                renderSidebar();
-            });
-            listsNav.appendChild(header);
-            state.lists
-                .filter((list) => sameId(list.groupId, group.id))
-                .forEach((list) => listsNav.appendChild(renderListRow(list, true)));
-        });
+        appendTree('', 0);
     }
 
     function renderCalendar() {
@@ -825,7 +1066,7 @@ document.addEventListener('DOMContentLoaded', () => {
             todoList.hidden = true;
             emptyState.hidden = false;
             if (emptyCopy) emptyCopy.textContent = 'Currently no list';
-            if (emptyHint) emptyHint.textContent = 'Use + New List in the sidebar, or pick a template in Settings.';
+            if (emptyHint) emptyHint.textContent = 'Add a list from the sidebar, or pick a template in Settings.';
             updateCount([]);
             return;
         }
@@ -980,7 +1221,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function addNewList() {
         const listName = await showInput('Enter new list name:', 'My New List');
         if (!listName) return;
-
+        const groupId = focusedGroupId();
         const newList = {
             id: uid('list_'),
             name: listName,
@@ -989,73 +1230,280 @@ document.addEventListener('DOMContentLoaded', () => {
             color: DEFAULT_ACCENT,
             resetFrequency: 'none',
             reset: { type: 'none' },
-            groupId: '',
+            groupId,
+            sort: nextTreeSort(groupId),
             role: 'owner'
         };
         state.lists.push(newList);
         state.currentListId = newList.id;
+        sidebarFocusGroupId = groupId;
+        expandGroupPath(groupId);
         applyTheme(DEFAULT_THEME);
         saveState();
-        renderSidebar();
         renderHeader();
         renderTodos();
+        revealSidebarItem(`.list-item[data-list-id="${CSS.escape(String(newList.id))}"]`);
     }
 
     async function addNewGroup() {
         const name = await showInput('New group name:', 'School');
         if (!name) return;
         if (!Array.isArray(state.groups)) state.groups = [];
-        state.groups.push({
+        const parentId = focusedGroupId();
+        const group = {
             id: uid('group_'),
             name,
-            sort: state.groups.length,
+            parentId,
+            collapsed: false,
+            sort: nextTreeSort(parentId),
             updatedAt: new Date().toISOString()
-        });
+        };
+        state.groups.push(group);
+        sidebarFocusGroupId = group.id;
+        expandGroupPath(parentId);
         saveState();
-        renderSidebar();
+        revealSidebarItem(`.list-group-header[data-group-id="${CSS.escape(String(group.id))}"]`);
     }
 
-    function bindSidebarListDrag(li, list) {
-        li.addEventListener('pointerdown', (e) => {
-            if (e.button !== 0) return;
-            if (!e.target.closest('.list-drag-handle')) return;
-            e.preventDefault();
-            listDrag = {
-                list,
-                li,
-                x: e.clientX,
-                y: e.clientY,
-                moved: false
+    function collapseAddNewMenu() {
+        const menu = document.getElementById('add-new-menu');
+        const btn = document.getElementById('add-new-btn');
+        if (!menu || !btn) return;
+        const phone = document.body.classList.contains('orbit-mobile')
+            || window.matchMedia('(max-width: 768px)').matches;
+        if (!phone) return;
+        menu.classList.remove('is-open');
+        btn.setAttribute('aria-expanded', 'false');
+    }
+
+    function measureTreeTops(exclude) {
+        const map = new Map();
+        [...listsNav.children].forEach((el) => {
+            if (el === exclude || el.hidden) return;
+            map.set(el, el.getBoundingClientRect().top);
+        });
+        return map;
+    }
+
+    function playTreeFlip(first, exclude) {
+        if (!canAnimateReorder()) return;
+        [...listsNav.children].forEach((el) => {
+            if (el === exclude || el.hidden) return;
+            const last = el.getBoundingClientRect().top;
+            const prev = first.get(el);
+            if (prev == null) return;
+            const invert = prev - last;
+            if (Math.abs(invert) < 1) return;
+            el.style.transition = 'none';
+            el.style.transform = `translateY(${invert}px)`;
+            el.getBoundingClientRect();
+            el.style.transition = 'transform 0.22s cubic-bezier(0.22, 1, 0.36, 1)';
+            el.style.transform = '';
+            const clear = (event) => {
+                if (event && event.propertyName !== 'transform') return;
+                el.style.transition = '';
+                el.style.transform = '';
+                el.removeEventListener('transitionend', clear);
             };
+            el.addEventListener('transitionend', clear);
         });
     }
 
-    function finishSidebarListDrag(e) {
-        if (!listDrag) return;
-        const drag = listDrag;
-        listDrag = null;
-        drag.li.classList.remove('dragging-list');
-        document.querySelectorAll('.drop-ready').forEach((el) => el.classList.remove('drop-ready'));
-        if (!drag.moved) return;
-        skipListClick = true;
-        const over = document.elementFromPoint(e.clientX, e.clientY);
-        const header = over?.closest('.list-group-header');
-        const other = over?.closest('.list-item');
-        let groupId = drag.list.groupId || '';
-        if (header?.dataset.groupId) groupId = header.dataset.groupId;
-        else if (other?.dataset.listId && other.dataset.listId !== String(drag.list.id)) {
-            const target = state.lists.find((item) => sameId(item.id, other.dataset.listId));
-            groupId = target?.groupId || '';
-        } else if (over?.closest('.lists-nav')) {
-            groupId = '';
-        } else {
-            return;
+    function bindTreeDrag(row) {
+        const handle = row.querySelector('.list-drag-handle');
+        if (!handle) return;
+        handle.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            startSidebarTreeDrag(row, handle, e);
+        });
+    }
+
+    function startSidebarTreeDrag(item, handle, event) {
+        const kind = item.dataset.kind;
+        const id = item.dataset.id;
+        if (!kind || !id) return;
+        handle.setPointerCapture?.(event.pointerId);
+        const rect = item.getBoundingClientRect();
+        const offsetY = event.clientY - rect.top;
+        const offsetX = event.clientX - rect.left;
+        const placeholder = document.createElement('li');
+        placeholder.className = 'tree-placeholder';
+        placeholder.style.height = `${rect.height}px`;
+        placeholder.setAttribute('aria-hidden', 'true');
+
+        const hidden = [];
+        if (kind === 'group') {
+            [...listsNav.children].forEach((row) => {
+                if (row === item) return;
+                if (isInsideGroup(row.dataset.parent, id) || isInsideGroup(row.dataset.id, id)) {
+                    row.hidden = true;
+                    hidden.push(row);
+                }
+            });
         }
-        if (String(drag.list.groupId || '') === String(groupId || '')) return;
-        drag.list.groupId = groupId;
-        drag.list.updatedAt = new Date().toISOString();
-        saveState();
-        renderSidebar();
+
+        let moved = false;
+        let lastY = event.clientY;
+        let dragging = true;
+        let settled = false;
+        let scrollRaf = 0;
+
+        const treeRows = () => [...listsNav.children].filter((el) => (
+            el !== item && el !== placeholder && !el.hidden
+        ));
+
+        const movePlaceholder = (clientX, clientY) => {
+            listsNav.querySelectorAll('.drop-into').forEach((el) => el.classList.remove('drop-into'));
+            const over = document.elementFromPoint(clientX, clientY)?.closest('.list-group-header, .list-item');
+            if (over && over !== item && over.dataset.kind === 'group' && !(kind === 'group' && (sameId(over.dataset.id, id) || isInsideGroup(over.dataset.id, id)))) {
+                const box = over.getBoundingClientRect();
+                const t = (clientY - box.top) / Math.max(box.height, 1);
+                if (t > 0.22 && t < 0.78) over.classList.add('drop-into');
+            }
+            const nodes = treeRows();
+            const before = nodes.find((el) => {
+                const box = el.getBoundingClientRect();
+                return clientY < box.top + box.height / 2;
+            });
+            if (before && placeholder.nextElementSibling === before) return;
+            if (!before && listsNav.lastElementChild === placeholder) return;
+            const first = measureTreeTops(item);
+            if (before) listsNav.insertBefore(placeholder, before);
+            else listsNav.appendChild(placeholder);
+            playTreeFlip(first, item);
+        };
+
+        const lift = () => {
+            if (moved) return;
+            moved = true;
+            item.after(placeholder);
+            item.classList.add('dragging');
+            listsNav.classList.add('is-sorting');
+            item.style.width = `${rect.width}px`;
+            item.style.left = `${rect.left}px`;
+            item.style.top = `${rect.top}px`;
+            item.style.position = 'fixed';
+            item.style.zIndex = '80';
+            item.style.margin = '0';
+            item.style.pointerEvents = 'none';
+            item.style.boxShadow = '0 12px 28px rgba(0, 0, 0, 0.45)';
+        };
+
+        const tickScroll = () => {
+            if (!dragging) return;
+            const box = listsNav.getBoundingClientRect();
+            const edge = 48;
+            let delta = 0;
+            if (lastY < box.top + edge) delta = -Math.max(2, (box.top + edge - lastY) * 0.16);
+            else if (lastY > box.bottom - edge) delta = Math.max(2, (lastY - (box.bottom - edge)) * 0.16);
+            if (delta) {
+                listsNav.scrollTop += delta;
+                if (moved) movePlaceholder(event.clientX, lastY);
+            }
+            scrollRaf = requestAnimationFrame(tickScroll);
+        };
+
+        const onMove = (ev) => {
+            lastY = ev.clientY;
+            if (!moved && Math.hypot(ev.clientX - event.clientX, ev.clientY - event.clientY) < 6) return;
+            lift();
+            item.style.top = `${ev.clientY - offsetY}px`;
+            item.style.left = `${ev.clientX - offsetX}px`;
+            movePlaceholder(ev.clientX, ev.clientY);
+        };
+
+        const destParentFromDom = () => {
+            const into = listsNav.querySelector('.list-group-header.drop-into');
+            if (into?.dataset.id && !(kind === 'group' && (sameId(into.dataset.id, id) || isInsideGroup(into.dataset.id, id)))) {
+                return { parent: String(into.dataset.id), append: true };
+            }
+            let prev = placeholder.previousElementSibling;
+            while (prev && (prev === item || prev.hidden)) prev = prev.previousElementSibling;
+            if (!prev) return { parent: '', append: false };
+            if (prev.dataset.kind === 'group' && prev.dataset.expanded === 'true' && !(kind === 'group' && sameId(prev.dataset.id, id))) {
+                return { parent: String(prev.dataset.id), append: false };
+            }
+            return { parent: String(prev.dataset.parent || ''), append: false };
+        };
+
+        const destIndexFromDom = (parent, append) => {
+            if (append) {
+                return treeChildren(parent).filter((node) => !(node.kind === kind && sameId(node.item.id, id))).length;
+            }
+            let index = 0;
+            let seen = false;
+            [...listsNav.children].forEach((row) => {
+                if (row === item || row.hidden) return;
+                if (row === placeholder) {
+                    seen = true;
+                    return;
+                }
+                if (!seen && String(row.dataset.parent || '') === String(parent || '')) index += 1;
+            });
+            return index;
+        };
+
+        const moveTreeNode = (destParent, destIndex) => {
+            const group = kind === 'group' ? (state.groups || []).find((item) => sameId(item.id, id)) : null;
+            const list = kind === 'list' ? (state.lists || []).find((item) => sameId(item.id, id)) : null;
+            if (!group && !list) return;
+            const oldParent = kind === 'group' ? groupParentId(group) : String(list.groupId || '');
+            if (kind === 'group' && (sameId(id, destParent) || isInsideGroup(destParent, id))) {
+                destParent = oldParent;
+            }
+            if (kind === 'group') group.parentId = destParent;
+            else list.groupId = destParent;
+            const nodes = treeChildren(destParent).filter((node) => !(node.kind === kind && sameId(node.item.id, id)));
+            nodes.splice(Math.max(0, Math.min(destIndex, nodes.length)), 0, { kind, item: group || list, sort: 0, name: '' });
+            nodes.forEach((node, index) => {
+                node.item.sort = index;
+            });
+            if (oldParent !== destParent) {
+                treeChildren(oldParent).forEach((node, index) => {
+                    node.item.sort = index;
+                });
+            }
+        };
+
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            dragging = false;
+            cancelAnimationFrame(scrollRaf);
+            handle.releasePointerCapture?.(event.pointerId);
+            handle.removeEventListener('pointermove', onMove);
+            handle.removeEventListener('pointerup', end);
+            handle.removeEventListener('pointercancel', end);
+            hidden.forEach((row) => { row.hidden = false; });
+            listsNav.querySelectorAll('.drop-into').forEach((el) => el.classList.remove('drop-into'));
+            if (!moved) {
+                item.removeAttribute('style');
+                item.classList.remove('dragging');
+                listsNav.classList.remove('is-sorting');
+                placeholder.remove();
+                return;
+            }
+            skipListClick = true;
+            const dest = destParentFromDom();
+            moveTreeNode(dest.parent, destIndexFromDom(dest.parent, dest.append));
+            if (kind === 'list') sidebarFocusGroupId = dest.parent;
+            else sidebarFocusGroupId = id;
+            expandGroupPath(dest.parent);
+            item.removeAttribute('style');
+            item.classList.remove('dragging');
+            placeholder.remove();
+            listsNav.classList.remove('is-sorting');
+            saveState();
+            renderSidebar();
+        };
+
+        const end = () => finish();
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', end);
+        handle.addEventListener('pointercancel', end);
+        scrollRaf = requestAnimationFrame(tickScroll);
     }
 
     async function clearCompleted() {
@@ -1252,13 +1700,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const groupSelect = document.getElementById('list-group-select');
         if (groupSelect) {
             groupSelect.innerHTML = '<option value="">No group</option>';
-            (state.groups || []).forEach((group) => {
-                const option = document.createElement('option');
-                option.value = group.id;
-                option.textContent = group.name;
-                if (sameId(group.id, list.groupId)) option.selected = true;
-                groupSelect.appendChild(option);
-            });
+            const addGroupOptions = (parentId, depth) => {
+                treeChildren(parentId).forEach((node) => {
+                    if (node.kind !== 'group') return;
+                    const option = document.createElement('option');
+                    option.value = node.item.id;
+                    option.textContent = `${depth ? `${'  '.repeat(depth)}` : ''}${node.item.name}`;
+                    if (sameId(node.item.id, list.groupId)) option.selected = true;
+                    groupSelect.appendChild(option);
+                    addGroupOptions(node.item.id, depth + 1);
+                });
+            };
+            addGroupOptions('', 0);
         }
         const shareGroup = document.getElementById('share-list-group');
         if (shareGroup) shareGroup.hidden = list.role === 'editor';
@@ -1580,11 +2033,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const MEDIA_DB = 'nanobanana_media';
+    const MEDIA_DB_FALLBACK = 'orbit_mobile_media';
     const MEDIA_STORE = 'wallpapers';
 
-    function openMediaDb() {
+    function openMediaDb(name = MEDIA_DB) {
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open(MEDIA_DB, 1);
+            const request = indexedDB.open(name, 1);
             request.onupgradeneeded = () => request.result.createObjectStore(MEDIA_STORE);
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
@@ -1601,13 +2055,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    async function wallpaperGetFrom(name, id) {
+        try {
+            const db = await openMediaDb(name);
+            return await new Promise((resolve, reject) => {
+                const request = db.transaction(MEDIA_STORE, 'readonly').objectStore(MEDIA_STORE).get(id);
+                request.onsuccess = () => resolve(request.result || null);
+                request.onerror = () => reject(request.error);
+            });
+        } catch {
+            return null;
+        }
+    }
+
     async function wallpaperGet(id) {
-        const db = await openMediaDb();
-        return new Promise((resolve, reject) => {
-            const request = db.transaction(MEDIA_STORE, 'readonly').objectStore(MEDIA_STORE).get(id);
-            request.onsuccess = () => resolve(request.result || null);
-            request.onerror = () => reject(request.error);
-        });
+        return (await wallpaperGetFrom(MEDIA_DB, id)) || (await wallpaperGetFrom(MEDIA_DB_FALLBACK, id));
     }
 
     async function wallpaperDel(id) {
@@ -1976,7 +2438,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const canResize = editMode && window.matchMedia('(min-width: 769px)').matches;
         resizeHandles.hidden = !canResize;
         enterEditBtn.textContent = editMode ? 'Exit edit mode' : 'Enter edit mode';
-        prefsBtn.setAttribute('aria-label', editMode ? 'Open settings (edit mode on)' : 'Open settings');
+        document.querySelectorAll('.js-open-settings').forEach((btn) => {
+            btn.setAttribute('aria-label', editMode ? 'Open settings (edit mode on)' : 'Open settings');
+        });
     }
 
     function showSettingsHome() {
@@ -2878,27 +3342,30 @@ document.addEventListener('DOMContentLoaded', () => {
         const configured = Boolean(window.OrbitSync?.isConfigured());
         if (hint) {
             hint.textContent = configured
-                ? 'Use email and a password. A one-time email link is also available.'
+                ? 'Use email and a password. If you already created an account, tap Log in — creating it again sends another email.'
                 : 'Cloud sync is not configured. Add your Supabase URL and anon key in js/supabase-config.js.';
         }
         const user = configured ? await window.OrbitSync.user() : null;
-        const accountBtn = document.getElementById('account-btn');
-        const accountLabel = accountBtn?.querySelector('.account-btn-label');
-        const accountDot = accountBtn?.querySelector('.account-btn-dot');
-        if (accountBtn) {
-            accountBtn.classList.toggle('is-signed-in', Boolean(user));
-            if (user) {
-                const name = String(user.email || 'You').split('@')[0];
-                if (accountLabel) accountLabel.textContent = name;
-                if (accountDot) accountDot.hidden = false;
-                accountBtn.setAttribute('aria-label', `Signed in as ${user.email}`);
-                accountBtn.title = `Signed in as ${user.email}`;
-            } else {
-                if (accountLabel) accountLabel.textContent = 'Log in';
-                if (accountDot) accountDot.hidden = true;
-                accountBtn.setAttribute('aria-label', 'Log in');
-                accountBtn.title = 'Log in';
-            }
+        document.body.classList.toggle('is-signed-in', Boolean(user));
+        const shortName = user ? String(user.email || 'You').split('@')[0] : 'Log in';
+        document.querySelectorAll('.account-btn-label').forEach((label) => {
+            label.textContent = shortName;
+        });
+        document.querySelectorAll('.js-open-account, #account-btn').forEach((btn) => {
+            btn.classList.toggle('is-signed-in', Boolean(user));
+            btn.setAttribute('aria-label', user ? `Signed in as ${user.email}` : 'Log in');
+            btn.title = user ? `Signed in as ${user.email}` : 'Log in';
+        });
+        document.querySelectorAll('.account-btn-dot').forEach((dot) => {
+            dot.hidden = !user;
+        });
+        const navTitle = document.getElementById('account-nav-title');
+        const navHint = document.getElementById('account-nav-hint');
+        if (navTitle) navTitle.textContent = user ? 'Account' : 'Log in';
+        if (navHint) navHint.textContent = user ? (user.email || 'Signed in') : 'Sync this device across phone and computer';
+        const prefsBtn = document.getElementById('prefs-btn');
+        if (prefsBtn) {
+            prefsBtn.setAttribute('aria-label', user ? 'Open settings' : 'Open settings and log in');
         }
         const title = document.getElementById('account-modal-title');
         if (title) title.textContent = user ? 'Account' : 'Log in';
@@ -2945,6 +3412,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (localPetChoice) state.settings.petChoice = localPetChoice;
         }
         if (remote.bitsParams) state.bitsParams = remote.bitsParams;
+        readSidebarTree();
         if (state.lists.some((list) => sameId(list.id, keepCurrent))) {
             state.currentListId = keepCurrent;
         } else if (remote.currentListId && state.lists.some((list) => sameId(list.id, remote.currentListId))) {
@@ -2996,13 +3464,27 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.key === 'Enter') addTodo();
         });
         clearCompletedBtn.addEventListener('click', clearCompleted);
-        addListBtn.addEventListener('click', addNewList);
-        addGroupBtn?.addEventListener('click', addNewGroup);
+        addListBtn.addEventListener('click', () => {
+            collapseAddNewMenu();
+            addNewList();
+        });
+        addGroupBtn?.addEventListener('click', () => {
+            collapseAddNewMenu();
+            addNewGroup();
+        });
+        document.getElementById('add-new-btn')?.addEventListener('click', () => {
+            const menu = document.getElementById('add-new-menu');
+            const btn = document.getElementById('add-new-btn');
+            if (!menu || !btn) return;
+            const open = !menu.classList.contains('is-open');
+            menu.classList.toggle('is-open', open);
+            btn.setAttribute('aria-expanded', String(open));
+        });
         menuBtn.addEventListener('click', toggleSidebar);
         closeSidebarBtn.addEventListener('click', () => setSidebarOpen(false));
         sidebarOverlay.addEventListener('click', () => setSidebarOpen(false));
 
-        prefsBtn.addEventListener('click', () => {
+        const openPrefs = () => {
             setPetStatus('');
             syncLayoutModal();
             applyWindowSize();
@@ -3012,10 +3494,16 @@ document.addEventListener('DOMContentLoaded', () => {
             showSettingsHome();
             setSidebarOpen(false);
             openModal(prefsModal);
+        };
+        document.querySelectorAll('.js-open-settings').forEach((btn) => {
+            btn.addEventListener('click', openPrefs);
         });
-        document.getElementById('account-btn')?.addEventListener('click', () => {
-            refreshAccountUi();
-            openModal(document.getElementById('account-modal'));
+        document.querySelectorAll('.js-open-account').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                closeModal(prefsModal);
+                refreshAccountUi();
+                openModal(document.getElementById('account-modal'));
+            });
         });
         document.getElementById('close-account-modal')?.addEventListener('click', () => {
             closeModal(document.getElementById('account-modal'));
@@ -3026,22 +3514,6 @@ document.addEventListener('DOMContentLoaded', () => {
         prefsModal.querySelectorAll('.settings-back-btn').forEach((btn) => {
             btn.addEventListener('click', showSettingsHome);
         });
-        document.addEventListener('pointermove', (e) => {
-            if (!listDrag) return;
-            const dx = e.clientX - listDrag.x;
-            const dy = e.clientY - listDrag.y;
-            if (!listDrag.moved && Math.hypot(dx, dy) < 8) return;
-            listDrag.moved = true;
-            e.preventDefault();
-            listDrag.li.classList.add('dragging-list');
-            document.querySelectorAll('.list-group-header, .lists-nav').forEach((el) => {
-                const box = el.getBoundingClientRect();
-                const hit = e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
-                el.classList.toggle('drop-ready', hit);
-            });
-        }, { passive: false });
-        document.addEventListener('pointerup', finishSidebarListDrag);
-        document.addEventListener('pointercancel', finishSidebarListDrag);
         listColorPicker.addEventListener('input', () => setCurrentListColor(listColorPicker.value));
         closePrefsModal.addEventListener('click', () => {
             showSettingsHome();
@@ -3167,6 +3639,7 @@ document.addEventListener('DOMContentLoaded', () => {
             status.textContent = message || '';
             status.classList.toggle('sync-error', Boolean(isError));
         };
+        const authNote = (err, fallback) => window.OrbitSync?.formatAuthError?.(err) || err?.message || fallback;
         const readAccountEmail = () => document.getElementById('account-email')?.value.trim() || '';
         const readAccountPassword = () => document.getElementById('account-password')?.value || '';
         document.getElementById('account-login-btn')?.addEventListener('click', async () => {
@@ -3185,7 +3658,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 setAccountNote('');
                 refreshAccountUi();
             } catch (err) {
-                setAccountNote(err.message || 'Could not log in.', true);
+                setAccountNote(authNote(err, 'Could not log in.'), true);
             }
         });
         document.getElementById('account-signup-btn')?.addEventListener('click', async () => {
@@ -3205,10 +3678,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     setAccountNote('');
                     refreshAccountUi();
                 } else {
-                    setAccountNote('Account created. Check your email if it asks you to confirm, then log in.');
+                    setAccountNote('Account created. If it asks you to confirm, check email once, then tap Log in. Don’t tap Create account again.');
                 }
             } catch (err) {
-                setAccountNote(err.message || 'Could not create that account.', true);
+                setAccountNote(authNote(err, 'Could not create that account.'), true);
             }
         });
         document.getElementById('account-password')?.addEventListener('keydown', (e) => {
@@ -3224,7 +3697,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 await window.OrbitSync.sendMagicLink(email);
                 setAccountNote('Check your email for the sign-in link.');
             } catch (err) {
-                setAccountNote(err.message || 'Could not send that link.', true);
+                setAccountNote(authNote(err, 'Could not send that link.'), true);
             }
         });
         document.getElementById('account-sync-btn')?.addEventListener('click', async () => {
