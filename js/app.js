@@ -1636,6 +1636,22 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function pinDragGhost(el, clientX, clientY, grabX, grabY) {
+        el.style.left = `${clientX - grabX}px`;
+        el.style.top = `${clientY - grabY}px`;
+    }
+
+    function liftDragGhost(el, width) {
+        document.body.appendChild(el);
+        el.style.width = `${width}px`;
+        el.style.position = 'fixed';
+        el.style.zIndex = '400';
+        el.style.margin = '0';
+        el.style.pointerEvents = 'none';
+        el.style.boxSizing = 'border-box';
+        el.style.maxWidth = 'none';
+    }
+
     function bindTreeDrag(row) {
         const handle = row.querySelector('.list-drag-handle');
         if (!handle) return;
@@ -1672,6 +1688,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         let moved = false;
+        let lastX = event.clientX;
         let lastY = event.clientY;
         let dragging = true;
         let settled = false;
@@ -1708,13 +1725,8 @@ document.addEventListener('DOMContentLoaded', () => {
             item.after(placeholder);
             item.classList.add('dragging');
             listsNav.classList.add('is-sorting');
-            item.style.width = `${rect.width}px`;
-            item.style.left = `${rect.left}px`;
-            item.style.top = `${rect.top}px`;
-            item.style.position = 'fixed';
-            item.style.zIndex = '80';
-            item.style.margin = '0';
-            item.style.pointerEvents = 'none';
+            liftDragGhost(item, rect.width);
+            pinDragGhost(item, event.clientX, event.clientY, offsetX, offsetY);
             item.style.boxShadow = '0 12px 28px rgba(0, 0, 0, 0.45)';
         };
 
@@ -1727,17 +1739,17 @@ document.addEventListener('DOMContentLoaded', () => {
             else if (lastY > box.bottom - edge) delta = Math.max(2, (lastY - (box.bottom - edge)) * 0.16);
             if (delta) {
                 listsNav.scrollTop += delta;
-                if (moved) movePlaceholder(event.clientX, lastY);
+                if (moved) movePlaceholder(lastX, lastY);
             }
             scrollRaf = requestAnimationFrame(tickScroll);
         };
 
         const onMove = (ev) => {
+            lastX = ev.clientX;
             lastY = ev.clientY;
             if (!moved && Math.hypot(ev.clientX - event.clientX, ev.clientY - event.clientY) < 6) return;
             lift();
-            item.style.top = `${ev.clientY - offsetY}px`;
-            item.style.left = `${ev.clientX - offsetX}px`;
+            pinDragGhost(item, ev.clientX, ev.clientY, offsetX, offsetY);
             movePlaceholder(ev.clientX, ev.clientY);
         };
 
@@ -1818,8 +1830,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (kind === 'list') sidebarFocusGroupId = dest.parent;
             else sidebarFocusGroupId = id;
             expandGroupPath(dest.parent);
-            item.removeAttribute('style');
-            item.classList.remove('dragging');
+            item.remove();
             placeholder.remove();
             listsNav.classList.remove('is-sorting');
             saveState();
@@ -1902,16 +1913,14 @@ document.addEventListener('DOMContentLoaded', () => {
         placeholder.style.height = `${rect.height}px`;
         placeholder.setAttribute('aria-hidden', 'true');
 
+        const grabX = event.clientX - rect.left;
+        const grabY = offsetY;
+
         item.after(placeholder);
         item.classList.add('dragging');
         todoList.classList.add('is-sorting');
-        item.style.width = `${rect.width}px`;
-        item.style.left = `${rect.left}px`;
-        item.style.top = `${rect.top}px`;
-        item.style.position = 'fixed';
-        item.style.zIndex = '80';
-        item.style.margin = '0';
-        item.style.pointerEvents = 'none';
+        liftDragGhost(item, rect.width);
+        pinDragGhost(item, event.clientX, event.clientY, grabX, grabY);
 
         let lastY = event.clientY;
         let dragging = true;
@@ -1948,7 +1957,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const onMove = (ev) => {
             lastY = ev.clientY;
-            item.style.top = `${ev.clientY - offsetY}px`;
+            pinDragGhost(item, ev.clientX, ev.clientY, grabX, grabY);
             movePlaceholder(ev.clientY);
         };
 
