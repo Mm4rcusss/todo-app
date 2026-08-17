@@ -61,7 +61,7 @@ body {
     background-size: cover;
     background-position: center center;
     transform-origin: center center;
-    transition: background-image 0.5s ease, filter 0.2s ease;
+    transition: filter 0.2s ease;
 }
 
 .bits-canvas {

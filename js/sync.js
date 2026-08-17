@@ -440,8 +440,8 @@
     async function syncWallpaperMedia() {
         try {
             await uploadMissingWallpapers();
-            await downloadMissingWallpapers();
-            hooks.onMedia?.();
+            const wrote = await downloadMissingWallpapers();
+            if (wrote) hooks.onMedia?.();
         } catch (err) {
             console.warn('Orbit wallpaper sync', err);
         }
@@ -463,13 +463,21 @@
             if (error) throw error;
             const remoteThemes = Array.isArray(prefs?.custom_themes) ? prefs.custom_themes : [];
             const merged = mergeById(state.customThemes || [], remoteThemes).slice(0, WALLPAPER_MAX);
-            state.customThemes = merged;
+            const idsBefore = (state.customThemes || []).map((theme) => String(theme.id)).join('\n');
+            const idsAfter = merged.map((theme) => String(theme.id)).join('\n');
+            const idsChanged = idsBefore !== idsAfter;
+            let adjustChanged = false;
+            if (idsChanged) state.customThemes = merged;
             if (prefs?.wallpaper_adjust && typeof prefs.wallpaper_adjust === 'object') {
-                state.wallpaperAdjust = { ...(state.wallpaperAdjust || {}), ...prefs.wallpaper_adjust };
+                const nextAdjust = { ...(state.wallpaperAdjust || {}), ...prefs.wallpaper_adjust };
+                if (JSON.stringify(state.wallpaperAdjust || {}) !== JSON.stringify(nextAdjust)) {
+                    state.wallpaperAdjust = nextAdjust;
+                    adjustChanged = true;
+                }
             }
-            hooks.persistLocal?.();
-            await downloadMissingWallpapers();
-            hooks.onMedia?.();
+            if (idsChanged || adjustChanged) hooks.persistLocal?.();
+            const wrote = await downloadMissingWallpapers();
+            if (idsChanged || wrote) hooks.onMedia?.();
         } catch (err) {
             console.warn('Orbit wallpaper pull', err);
         } finally {
@@ -1162,8 +1170,8 @@
         lastSyncAt = nowIso();
         lastError = '';
         pullBlocked = false;
-        await downloadMissingWallpapers();
-        hooks.onMedia?.();
+        const wrote = await downloadMissingWallpapers();
+        if (wrote) hooks.onMedia?.();
     }
 
     async function run(kind, options = {}) {

@@ -2689,56 +2689,90 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#050816');
     }
 
+    let appliedThemeId = '';
+
     function applyTheme(themeId) {
         applyListAccent();
+        const nextId = themeId || DEFAULT_THEME;
         if (state.settings.optimizedMode) {
+            if (appliedThemeId === 'optimized') {
+                renderBitsControls();
+                renderWallpaperControls();
+                return;
+            }
             window.BitsFX?.stop();
             resetBackgroundLayer();
             backgroundLayer.style.backgroundColor = '#050816';
+            appliedThemeId = 'optimized';
             renderBitsControls();
             renderWallpaperControls();
             return;
         }
 
-        if (window.BitsFX?.isBitsTheme(themeId)) {
+        if (window.BitsFX?.isBitsTheme(nextId)) {
+            if (appliedThemeId === nextId) {
+                renderBitsControls();
+                renderWallpaperControls();
+                return;
+            }
             resetBackgroundLayer();
-            const params = { ...window.BitsFX.getDefaults(themeId), ...(state.bitsParams[themeId] || {}) };
+            const params = { ...window.BitsFX.getDefaults(nextId), ...(state.bitsParams[nextId] || {}) };
             backgroundLayer.style.backgroundColor = '#050816';
-            window.BitsFX.start(themeId, backgroundLayer, params);
+            window.BitsFX.start(nextId, backgroundLayer, params);
+            appliedThemeId = nextId;
             renderBitsControls();
             renderWallpaperControls();
             return;
         }
 
         window.BitsFX?.stop();
-        resetBackgroundLayer();
 
-        const custom = state.customThemes.find((theme) => theme.id === themeId);
-        if (custom || String(themeId || '').startsWith('custom_')) {
-            backgroundLayer.style.backgroundColor = custom?.color || '#050816';
-            backgroundLayer.style.backgroundRepeat = 'no-repeat';
-            wallpaperGet(themeId).then((dataUrl) => {
-                if (currentList()?.theme !== themeId) return;
-                if (dataUrl) {
-                    backgroundLayer.style.backgroundImage = `url("${dataUrl}")`;
-                    applyWallpaperAdjust(themeId);
-                }
+        const custom = state.customThemes.find((theme) => theme.id === nextId);
+        if (custom || String(nextId).startsWith('custom_')) {
+            const showing = /url\(/.test(backgroundLayer.style.backgroundImage || '');
+            if (appliedThemeId === nextId && showing) {
+                applyWallpaperAdjust(nextId);
+                renderBitsControls();
+                renderWallpaperControls();
+                return;
+            }
+            if (!showing) {
+                resetBackgroundLayer();
+                backgroundLayer.style.backgroundColor = '#050816';
+            }
+            wallpaperGet(nextId).then((dataUrl) => {
+                if (currentList()?.theme !== nextId) return;
+                if (!dataUrl) return;
+                backgroundLayer.style.backgroundColor = '#050816';
+                backgroundLayer.style.backgroundImage = `url("${dataUrl}")`;
+                backgroundLayer.style.backgroundRepeat = 'no-repeat';
+                applyWallpaperAdjust(nextId);
             }).catch(() => {});
-            applyWallpaperAdjust(themeId);
+            applyWallpaperAdjust(nextId);
+            appliedThemeId = nextId;
             renderBitsControls();
             renderWallpaperControls();
             return;
         }
 
-        const theme = themes.find((item) => item.id === themeId) || themes[0];
+        if (appliedThemeId === nextId) {
+            renderBitsControls();
+            renderWallpaperControls();
+            return;
+        }
+
+        resetBackgroundLayer();
+
+        const theme = themes.find((item) => item.id === nextId) || themes[0];
         if (theme.animated) backgroundLayer.classList.add('animate-bg');
         if (String(theme.bg).includes('url(')) {
             backgroundLayer.style.backgroundImage = theme.bg;
             backgroundLayer.style.backgroundRepeat = 'no-repeat';
-            applyWallpaperAdjust(themeId);
+            applyWallpaperAdjust(nextId);
         } else {
             backgroundLayer.style.backgroundImage = theme.bg;
         }
+        appliedThemeId = nextId;
         renderBitsControls();
         renderWallpaperControls();
     }
