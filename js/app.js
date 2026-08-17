@@ -632,10 +632,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 );
                 if (!confirmed) return;
                 if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
-                state.deletedListIds.push(list.id);
-                if (leaving) {
-                    try { await window.OrbitSync?.leaveList(list.id); } catch { /* still remove locally */ }
-                }
+                state.deletedListIds.push(String(list.id));
                 state.lists = state.lists.filter((item) => !sameId(item.id, list.id));
                 if (!leaving) state.tasks = state.tasks.filter((task) => !sameId(task.listId, list.id));
                 if (sameId(state.currentListId, list.id)) {
@@ -647,7 +644,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderHeader();
                 renderTodos();
                 refreshCalendarMarkers();
-                window.OrbitSync?.pushNow?.();
+                try {
+                    if (leaving) await window.OrbitSync?.leaveList(list.id);
+                    else await window.OrbitSync?.removeList(list.id);
+                } catch {
+                    /* tombstone keeps it from coming back until cloud delete lands */
+                }
             });
         }
         return li;
@@ -2809,7 +2811,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (localPetChoice) state.settings.petChoice = localPetChoice;
         }
         if (remote.bitsParams) state.bitsParams = remote.bitsParams;
-        if (remote.currentListId) state.currentListId = remote.currentListId;
+        if (remote.currentListId && !gone.has(String(remote.currentListId))) {
+            state.currentListId = remote.currentListId;
+        }
         if (!state.lists.some((list) => sameId(list.id, state.currentListId))) {
             state.currentListId = state.lists[0]?.id || 'default';
         }

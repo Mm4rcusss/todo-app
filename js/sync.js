@@ -294,9 +294,11 @@
     }
 
     function ownedLists(state, userId) {
+        const blocked = new Set((state.deletedListIds || []).map(String));
         return (state.lists || []).filter((list) => (
             list.role !== 'editor'
             && (!list.ownerId || String(list.ownerId) === String(userId))
+            && !blocked.has(String(list.id))
         ));
     }
 
@@ -441,6 +443,12 @@
 
         lastSyncAt = nowIso();
         lastError = '';
+        const live = hooks.getState?.();
+        if (live) {
+            const stillThere = new Set(remoteLists.map((list) => String(list.id)));
+            live.deletedListIds = (live.deletedListIds || []).filter((id) => stillThere.has(String(id)));
+            hooks.persistLocal?.();
+        }
         hooks.applyCloud({
             lists: cloudState.lists,
             tasks: cloudState.tasks,
@@ -530,15 +538,12 @@
         if (removedLists.length) {
             const { error: listDeleteError } = await sb.from('lists')
                 .delete()
-                .in('id', removedLists)
-                .eq('owner_id', user.id);
+                .in('id', removedLists);
             if (listDeleteError && !isBlockedWrite(listDeleteError)) throw listDeleteError;
             for (const id of removedLists) {
                 const { error: leaveError } = await sb.rpc('leave_shared_list', { p_list_id: id });
                 void leaveError;
             }
-            state.deletedListIds = [];
-            hooks.persistLocal?.();
         }
 
         const { data: remoteGroups } = await sb.from('groups').select('id').eq('user_id', user.id);
@@ -654,8 +659,8 @@
             while (pendingKind) {
                 const next = pendingKind;
                 pendingKind = null;
-                if (next === 'pull' || next === 'both') await pull();
                 if (next === 'push' || next === 'both') await push();
+                if (next === 'pull' || next === 'both') await pull();
             }
         } catch (err) {
             lastError = formatError(err);
@@ -833,6 +838,16 @@
             if (!sb) return;
             const { error } = await sb.rpc('leave_shared_list', { p_list_id: String(listId) });
             if (error) throw error;
+        },
+        async removeList(listId) {
+            const sb = await getClient();
+            const user = await sessionUser();
+            if (!sb || !user || !listId) return;
+            const id = String(listId);
+            const { error: deleteError } = await sb.from('lists').delete().eq('id', id);
+            if (deleteError && !isBlockedWrite(deleteError)) throw deleteError;
+            const { error: leaveError } = await sb.rpc('leave_shared_list', { p_list_id: id });
+            void leaveError;
         }
     };
 
