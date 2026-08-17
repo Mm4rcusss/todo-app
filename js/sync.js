@@ -14,10 +14,12 @@
     let wallpaperChannel = null;
     const TOMBSTONE_KEY = 'orbit_deleted_lists';
     const GROUP_TOMBSTONE_KEY = 'orbit_deleted_groups';
+    const TASK_TOMBSTONE_KEY = 'orbit_deleted_tasks';
     const KNOWN_LISTS_KEY = 'orbit_known_lists';
     const KNOWN_GROUPS_KEY = 'orbit_known_groups';
     const sessionListTombs = new Set();
     const sessionGroupTombs = new Set();
+    const sessionTaskTombs = new Set();
     let pullBlocked = false;
 
     function loadStoredIds(key) {
@@ -85,6 +87,16 @@
         return forgetIds(GROUP_TOMBSTONE_KEY, sessionGroupTombs, [String(id)], 'deletedGroupIds');
     }
 
+    function rememberDeletedTask(ids) {
+        const extras = (Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean);
+        return rememberIds(TASK_TOMBSTONE_KEY, sessionTaskTombs, extras, 'deletedTaskIds');
+    }
+
+    function forgetDeletedTask(ids) {
+        const extras = (Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean);
+        return forgetIds(TASK_TOMBSTONE_KEY, sessionTaskTombs, extras, 'deletedTaskIds');
+    }
+
     function tombstoneSet(state) {
         return new Set([
             ...sessionListTombs,
@@ -101,6 +113,18 @@
         ].map(String));
     }
 
+    function loadTaskTombs() {
+        return loadStoredIds(TASK_TOMBSTONE_KEY);
+    }
+
+    function taskTombstoneSet(state) {
+        return new Set([
+            ...sessionTaskTombs,
+            ...loadTaskTombs(),
+            ...((state?.deletedTaskIds) || [])
+        ].map(String));
+    }
+
     function listIsDeleted(id, tombs) {
         const value = String(id || '');
         const blocked = tombs instanceof Set ? tombs : new Set([...(tombs || [])].map(String));
@@ -110,6 +134,12 @@
     }
 
     function groupIsDeleted(id, tombs) {
+        const value = String(id || '');
+        const blocked = tombs instanceof Set ? tombs : new Set([...(tombs || [])].map(String));
+        return blocked.has(value);
+    }
+
+    function taskIsDeleted(id, tombs) {
         const value = String(id || '');
         const blocked = tombs instanceof Set ? tombs : new Set([...(tombs || [])].map(String));
         return blocked.has(value);
@@ -167,7 +197,10 @@
 
     function noteLocalDelete(ids, kind = 'list') {
         pullBlocked = true;
-        rememberKnown(kind, Array.isArray(ids) ? ids : [ids]);
+        const list = (Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean);
+        if (kind === 'task') rememberDeletedTask(list);
+        else if (kind === 'group') rememberKnown('group', list);
+        else rememberKnown('list', list);
     }
 
     function syncPrefs() {
@@ -204,6 +237,16 @@
             if (idsAtStart.has(id) && !liveIds.has(id)) return false;
             if (knownIds?.has(id) && !liveIds.has(id)) return false;
             if (remoteIds.has(id)) return !groupIsDeleted(id, tombs);
+            return liveIds.has(id);
+        });
+    }
+
+    function filterPulledTasks(merged, { tombs, idsAtStart, liveIds, remoteIds }) {
+        return (merged || []).filter((task) => {
+            const id = String(task.id);
+            if (taskIsDeleted(id, tombs)) return false;
+            if (idsAtStart.has(id) && !liveIds.has(id)) return false;
+            if (remoteIds.has(id)) return !taskIsDeleted(id, tombs);
             return liveIds.has(id);
         });
     }
@@ -809,6 +852,7 @@
         if (ensureHomeListId(local, user.id) || ensureDefaultTagIds(local, user.id)) hooks.persistLocal?.();
         const idsAtStart = new Set((local.lists || []).map((list) => String(list.id)));
         const groupIdsAtStart = new Set((local.groups || []).map((group) => String(group.id)));
+        const taskIdsAtStart = new Set((local.tasks || []).map((task) => String(task.id)));
         const themeIdsAtStart = new Set((local.customThemes || []).map((theme) => String(theme.id)));
         rememberKnown('list', idsAtStart);
         rememberKnown('group', groupIdsAtStart);
@@ -855,7 +899,8 @@
 
         const liveIds = new Set((live.lists || []).map((list) => String(list.id)));
         const liveGroupIds = new Set((live.groups || []).map((group) => String(group.id)));
-        const deleted = new Set((live.deletedTaskIds || []).map(String));
+        const liveTaskIds = new Set((live.tasks || []).map((task) => String(task.id)));
+        const deleted = taskTombstoneSet(live);
         const remoteIds = new Set(remoteLists.map((list) => String(list.id)));
         const remoteGroupIds = new Set(remoteGroups.map((group) => String(group.id)));
         const knownLists = knownListIds(live);
@@ -879,14 +924,19 @@
         const remoteTaskIds = new Set(remoteTasks.map((task) => String(task.id)));
         const listIds = new Set(lists.map((list) => String(list.id)));
         const tasks = contentPrefs.lists
-            ? mergeById(live.tasks || [], remoteTasks).filter((task) => {
+            ? filterPulledTasks(mergeById(live.tasks || [], remoteTasks), {
+                tombs: deleted,
+                idsAtStart: taskIdsAtStart,
+                liveIds: liveTaskIds,
+                remoteIds: remoteTaskIds
+            }).filter((task) => {
                 const id = String(task.id);
-                if (!listIds.has(String(task.listId)) || deleted.has(id) || listIsDeleted(task.listId, deletedLists)) return false;
+                if (!listIds.has(String(task.listId)) || listIsDeleted(task.listId, deletedLists)) return false;
                 if (localOnlyIds.has(String(task.listId))) return true;
                 if (remoteTaskIds.has(id)) return true;
                 return !previousSync || stamp(task.updatedAt) >= stamp(previousSync);
             })
-            : [...(live.tasks || [])];
+            : [...(live.tasks || [])].filter((task) => !taskIsDeleted(task.id, deleted));
         const tags = mergeById(live.tags || [], remoteTags);
         const groups = contentPrefs.groups
             ? filterPulledGroups(mergeById(live.groups || [], remoteGroups), {
@@ -928,6 +978,8 @@
         const groupTombsNow = expandGroupTombs(fresh);
         const freshListIds = new Set((fresh.lists || []).map((list) => String(list.id)));
         const freshGroupIds = new Set((fresh.groups || []).map((group) => String(group.id)));
+        const freshTaskIds = new Set((fresh.tasks || []).map((task) => String(task.id)));
+        const taskTombsNow = taskTombstoneSet(fresh);
         const knownNow = knownListIds(fresh);
         const knownGroupsNow = knownGroupIds(fresh);
         const cloudState = { lists, tasks, currentListId };
@@ -942,9 +994,34 @@
             return listIsLocalOnly(localList) ? localList : list;
         });
         const keptListIds = new Set((cloudState.lists || []).map((list) => String(list.id)));
-        cloudState.tasks = (cloudState.tasks || []).filter((task) => (
-            !listIsDeleted(task.listId, tombsNow) && keptListIds.has(String(task.listId))
-        ));
+        cloudState.tasks = (cloudState.tasks || []).filter((task) => {
+            const id = String(task.id);
+            if (listIsDeleted(task.listId, tombsNow) || !keptListIds.has(String(task.listId))) return false;
+            if (taskIsDeleted(id, taskTombsNow)) return false;
+            if (taskIdsAtStart.has(id) && !freshTaskIds.has(id)) return false;
+            return true;
+        });
+        const editing = hooks.editingItem?.();
+        if (editing?.kind === 'task') {
+            const localTask = (fresh.tasks || []).find((item) => String(item.id) === String(editing.id || editing.taskId));
+            if (localTask) {
+                const text = typeof editing.value === 'string' ? editing.value : localTask.text;
+                const pinned = { ...localTask, text };
+                const index = cloudState.tasks.findIndex((item) => String(item.id) === String(localTask.id));
+                if (index >= 0) cloudState.tasks[index] = { ...cloudState.tasks[index], ...pinned };
+                else cloudState.tasks.push(pinned);
+            }
+        }
+        if (editing?.kind === 'list') {
+            const localList = (fresh.lists || []).find((item) => String(item.id) === String(editing.id))
+                || (fresh.lists || []).find((item) => String(item.id) === String(fresh.currentListId));
+            if (localList && String(editing.value || '').trim()) {
+                const index = cloudState.lists.findIndex((item) => String(item.id) === String(localList.id));
+                if (index >= 0) {
+                    cloudState.lists[index] = { ...cloudState.lists[index], name: editing.value.trim() };
+                }
+            }
+        }
         const keptGroups = (groups || []).filter((group) => {
             const id = String(group.id);
             if (groupIsDeleted(id, groupTombsNow)) return false;
@@ -960,7 +1037,7 @@
             cloudState.currentListId = cloudState.lists[0]?.id || '';
         }
 
-        if (editingNow()) {
+        if (editingNow() && !hooks.editingItem?.()) {
             pendingKind = mergeKinds(pendingKind, 'pull');
             return;
         }
@@ -1005,12 +1082,10 @@
             : [];
         const editableIds = editable.map((list) => String(list.id));
 
-        const deletedIds = (state.deletedTaskIds || []).map(String).filter(Boolean);
+        const deletedIds = [...taskTombstoneSet(hooks.getState() || state)];
         if (deletedIds.length) {
             const { error: deleteError } = await sb.from('tasks').delete().in('id', deletedIds);
             if (deleteError && !isBlockedWrite(deleteError)) throw deleteError;
-            state.deletedTaskIds = [];
-            hooks.persistLocal?.();
         }
 
         if (owned.length) {
@@ -1199,13 +1274,7 @@
                 pendingKind = null;
                 if (next === 'push' || next === 'both') await push();
                 const allowPull = options.force || (!pullBlocked && prefsNow.mode === 'live');
-                if ((next === 'pull' || next === 'both') && allowPull) {
-                    if (!options.force && editingNow()) {
-                        pendingKind = mergeKinds(pendingKind, 'pull');
-                        break;
-                    }
-                    await pull();
-                }
+                if ((next === 'pull' || next === 'both') && allowPull) await pull();
             }
         } catch (err) {
             lastError = formatError(err);
@@ -1214,9 +1283,7 @@
         } finally {
             busy = false;
             hooks.onStatus?.();
-            if (!pendingKind) return;
-            if (!options.force && editingNow() && pendingKind === 'pull') return;
-            run(pendingKind, options);
+            if (pendingKind) run(pendingKind, options);
         }
     }
 
@@ -1224,16 +1291,8 @@
         if (!isConfigured() || !ready) return;
         if (syncPrefs().mode !== 'off') void pullWallpaperState();
         if (pullBlocked || syncPrefs().mode !== 'live') return;
-        if (editingNow()) {
-            pendingKind = mergeKinds(pendingKind, 'pull');
-            return;
-        }
         sessionUser().then((user) => {
             if (!user) return;
-            if (editingNow()) {
-                pendingKind = mergeKinds(pendingKind, 'pull');
-                return;
-            }
             if (pushTimer) {
                 pendingKind = mergeKinds(pendingKind, 'pull');
                 return;
@@ -1324,14 +1383,20 @@
         forgetDeleted,
         rememberDeletedGroup,
         forgetDeletedGroup,
+        rememberDeletedTask,
+        forgetDeletedTask,
         noteLocalDelete,
         listIsDeleted,
         groupIsDeleted,
+        taskIsDeleted,
         deletedListIds() {
             return [...tombstoneSet(hooks.getState?.())];
         },
         deletedGroupIds() {
             return [...groupTombstoneSet(hooks.getState?.())];
+        },
+        deletedTaskIds() {
+            return [...taskTombstoneSet(hooks.getState?.())];
         },
         syncMode() {
             return syncPrefs().mode;
@@ -1358,8 +1423,10 @@
         _test: {
             filterPulledLists,
             filterPulledGroups,
+            filterPulledTasks,
             listIsDeleted,
             groupIsDeleted,
+            taskIsDeleted,
             mergeById
         },
         async user() {
@@ -1407,8 +1474,8 @@
             document.addEventListener('focusout', () => {
                 global.setTimeout(() => {
                     if (editingNow()) return;
-                    if (pendingKind === 'pull' || pendingKind === 'both') schedulePull();
-                }, 80);
+                    schedulePull();
+                }, 200);
             });
             await OrbitSync.consumeInviteFromUrl();
             ready = true;

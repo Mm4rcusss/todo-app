@@ -1539,18 +1539,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const index = state.tasks.findIndex((task) => sameId(task.id, todo.id));
         if (index === -1) return;
         const [removed] = state.tasks.splice(index, 1);
-        if (!Array.isArray(state.deletedTaskIds)) state.deletedTaskIds = [];
-        state.deletedTaskIds.push(removed.id);
+        window.OrbitSync?.rememberDeletedTask?.(removed.id);
+        window.OrbitSync?.noteLocalDelete?.(removed.id, 'task');
         saveState();
         renderTodos();
         refreshCalendarMarkers();
         showUndo('Task deleted', () => {
+            window.OrbitSync?.forgetDeletedTask?.(removed.id);
             state.tasks.splice(index, 0, removed);
-            state.deletedTaskIds = (state.deletedTaskIds || []).filter((id) => !sameId(id, removed.id));
             saveState();
             renderTodos();
             refreshCalendarMarkers();
         });
+        void window.OrbitSync?.pushNow?.();
     }
 
     async function addNewList() {
@@ -1861,9 +1862,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const ids = new Set(tasks.map((task) => String(task.id)));
         state.tasks = state.tasks.filter((task) => !ids.has(String(task.id)));
+        window.OrbitSync?.rememberDeletedTask?.([...ids]);
+        window.OrbitSync?.noteLocalDelete?.([...ids], 'task');
         saveState();
         renderTodos();
         refreshCalendarMarkers();
+        void window.OrbitSync?.pushNow?.();
     }
 
     function bindPointerReorder(item) {
@@ -3942,26 +3946,72 @@ document.addEventListener('DOMContentLoaded', () => {
         return !['checkbox', 'radio', 'range', 'color', 'file', 'button', 'submit', 'reset', 'hidden'].includes(type);
     }
 
-    function captureEditor() {
-        const el = document.activeElement;
+    let editSession = null;
+    let editBlurTimer = 0;
+
+    function describeEditor(el) {
         if (!isTypingTarget(el)) return null;
+        const taskId = el.closest('.todo-item')?.dataset.id || '';
+        const isTitle = el.classList.contains('header-title-input');
         return {
-            taskId: el.closest('.todo-item')?.dataset.id || '',
-            isTitle: el.classList.contains('header-title-input'),
-            id: el.id || '',
+            kind: taskId ? 'task' : (isTitle ? 'list' : (el.id === 'todo-input' ? 'composer' : 'field')),
+            taskId,
+            isTitle,
+            id: taskId || (isTitle ? String(state.currentListId || '') : (el.id || '')),
             value: 'value' in el ? el.value : '',
             start: el.selectionStart,
             end: el.selectionEnd
         };
     }
 
+    function beginEditSession(el) {
+        const next = describeEditor(el);
+        if (!next) return;
+        if (editBlurTimer) {
+            clearTimeout(editBlurTimer);
+            editBlurTimer = 0;
+        }
+        editSession = next;
+    }
+
+    function snapshotEditSession() {
+        const live = describeEditor(document.activeElement);
+        if (live) editSession = live;
+        return editSession;
+    }
+
+    function releaseEditSession() {
+        if (isTypingTarget(document.activeElement)) {
+            beginEditSession(document.activeElement);
+            return;
+        }
+        const wasEditing = Boolean(editSession);
+        editSession = null;
+        if (!wasEditing) return;
+        renderSidebar();
+        renderCalendar();
+        renderHeader();
+        renderTodos();
+        refreshCalendarMarkers();
+    }
+
+    function bindEditSession() {
+        const capture = (e) => beginEditSession(e.target);
+        document.addEventListener('pointerdown', capture, true);
+        document.addEventListener('focusin', capture);
+        document.addEventListener('input', capture);
+        document.addEventListener('focusout', () => {
+            editBlurTimer = window.setTimeout(releaseEditSession, 150);
+        });
+    }
+
     function restoreEditor(snap) {
         if (!snap) return;
         const apply = () => {
             let el = null;
-            if (snap.taskId) {
-                el = todoList.querySelector(`.todo-item[data-id="${CSS.escape(String(snap.taskId))}"] .todo-input-edit`);
-            } else if (snap.isTitle) {
+            if (snap.taskId || snap.kind === 'task') {
+                el = todoList.querySelector(`.todo-item[data-id="${CSS.escape(String(snap.taskId || snap.id))}"] .todo-input-edit`);
+            } else if (snap.isTitle || snap.kind === 'list') {
                 el = listTitle.querySelector('.header-title-input');
             } else if (snap.id) {
                 el = document.getElementById(snap.id);
@@ -3980,7 +4030,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function applyCloudState(remote) {
-        const editor = captureEditor();
+        const editor = snapshotEditSession();
+        const lockedTask = (editor?.kind === 'task' || editor?.taskId)
+            ? state.tasks.find((item) => String(item.id) === String(editor.taskId || editor.id))
+            : null;
+        const lockedList = (editor?.kind === 'list' || editor?.isTitle)
+            ? (state.lists.find((item) => String(item.id) === String(editor.id)) || currentList())
+            : null;
         const localPets = state.settings?.pets;
         const localPetChoice = state.settings?.petChoice;
         const gone = new Set([
@@ -3997,7 +4053,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const blockedGroup = (id) => (
             window.OrbitSync?.groupIsDeleted?.(id, goneGroups) || goneGroups.has(String(id))
         );
-        const goneTasks = new Set((state.deletedTaskIds || []).map(String));
+        const goneTasks = new Set([
+            ...(state.deletedTaskIds || []),
+            ...(window.OrbitSync?.deletedTaskIds?.() || [])
+        ].map(String));
         const keepCurrent = state.currentListId;
         state.lists = (remote.lists || []).filter((list) => !blocked(list.id));
         state.tasks = (remote.tasks || []).filter((task) => (
@@ -4030,14 +4089,26 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             state.currentListId = state.lists[0]?.id || '';
         }
-        if (editor?.taskId) {
+        if (lockedTask) {
+            const text = typeof editor.value === 'string' ? editor.value : lockedTask.text;
+            const pinned = { ...lockedTask, text };
+            const index = state.tasks.findIndex((item) => String(item.id) === String(lockedTask.id));
+            if (index >= 0) state.tasks[index] = { ...state.tasks[index], ...pinned };
+            else state.tasks.push(pinned);
+        } else if (editor?.taskId) {
             const task = state.tasks.find((item) => String(item.id) === String(editor.taskId));
             if (task && typeof editor.value === 'string' && task.text !== editor.value) {
                 task.text = editor.value;
                 task.updatedAt = new Date().toISOString();
             }
         }
-        if (editor?.isTitle) {
+        if (lockedList && String(editor.value || '').trim()) {
+            const name = editor.value.trim();
+            const index = state.lists.findIndex((item) => String(item.id) === String(lockedList.id));
+            if (index >= 0 && state.lists[index].name !== name) {
+                state.lists[index] = { ...state.lists[index], name, updatedAt: new Date().toISOString() };
+            }
+        } else if (editor?.isTitle) {
             const list = currentList();
             if (list && String(editor.value || '').trim() && list.name !== editor.value.trim()) {
                 list.name = editor.value.trim();
@@ -4045,18 +4116,28 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         saveState({ skipSync: true });
+        if (editor?.kind === 'task' || editor?.taskId || editor?.kind === 'composer') {
+            renderSidebar();
+            renderCalendar();
+            return;
+        }
+        if (editor?.kind === 'list' || editor?.isTitle) {
+            renderSidebar();
+            renderCalendar();
+            renderTodos();
+            return;
+        }
+        if (editor) return;
         renderSidebar();
         renderCalendar();
         renderHeader();
         renderTodos();
-        if (!editor) {
-            applyTheme(currentList()?.theme || DEFAULT_THEME);
-            renderThemeOptions();
-            renderWidgets();
-            syncLayoutModal();
-            refreshAccountUi();
-            applyLoginChip();
-        }
+        applyTheme(currentList()?.theme || DEFAULT_THEME);
+        renderThemeOptions();
+        renderWidgets();
+        syncLayoutModal();
+        refreshAccountUi();
+        applyLoginChip();
         restoreEditor(editor);
     }
 
@@ -4065,7 +4146,8 @@ document.addEventListener('DOMContentLoaded', () => {
             getState: () => state,
             applyCloud: applyCloudState,
             persistLocal: () => saveState({ skipSync: true }),
-            isEditing: () => Boolean(isTypingTarget(document.activeElement)),
+            isEditing: () => Boolean(editSession || isTypingTarget(document.activeElement)),
+            editingItem: () => snapshotEditSession(),
             wallpaperGet,
             wallpaperPut,
             onMedia: () => {
@@ -4099,6 +4181,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function setupEventListeners() {
+        bindEditSession();
         addBtn.addEventListener('click', addTodo);
         todoInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') addTodo();

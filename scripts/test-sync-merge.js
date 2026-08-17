@@ -18,7 +18,7 @@ if (!sync?._test) {
     throw new Error('OrbitSync._test helpers were not exported');
 }
 
-const { filterPulledLists, filterPulledGroups, listIsDeleted, groupIsDeleted, mergeById } = sync._test;
+const { filterPulledLists, filterPulledGroups, filterPulledTasks, listIsDeleted, groupIsDeleted, taskIsDeleted, mergeById } = sync._test;
 
 let failed = 0;
 function assert(name, condition) {
@@ -32,6 +32,19 @@ function assert(name, condition) {
 
 function ids(items) {
     return (items || []).map((item) => String(item.id)).sort().join(',');
+}
+
+function pullTasks({ live, remote, tombs, idsAtStart }) {
+    const deletedTasks = new Set([...(tombs || [])].map(String));
+    const liveIds = new Set((live || []).map((task) => String(task.id)));
+    const start = new Set([...(idsAtStart || liveIds)].map(String));
+    const remoteIds = new Set((remote || []).map((task) => String(task.id)));
+    return filterPulledTasks(mergeById(live || [], remote || []), {
+        tombs: deletedTasks,
+        idsAtStart: start,
+        liveIds,
+        remoteIds
+    });
 }
 
 function pullLists({ live, remote, tombs, idsAtStart, knownIds, localOnlyIds }) {
@@ -68,8 +81,10 @@ function pullGroups({ live, remote, tombs, idsAtStart, knownIds }) {
 function applyCloud(state, remote) {
     const gone = new Set([...(state.deletedListIds || []), ...sync.deletedListIds()].map(String));
     const goneGroups = new Set([...(state.deletedGroupIds || []), ...sync.deletedGroupIds()].map(String));
+    const goneTasks = new Set([...(state.deletedTaskIds || []), ...(sync.deletedTaskIds?.() || [])].map(String));
     state.lists = (remote.lists || []).filter((list) => !listIsDeleted(list.id, gone) && !gone.has(String(list.id)));
     state.groups = (remote.groups || []).filter((group) => !groupIsDeleted(group.id, goneGroups) && !goneGroups.has(String(group.id)));
+    state.tasks = (remote.tasks || []).filter((task) => !taskIsDeleted(task.id, goneTasks) && !goneTasks.has(String(task.id)));
 }
 
 // --- list races ---
@@ -233,6 +248,58 @@ assert(
         localOnlyIds: ['private']
     })) === 'private'
 );
+
+assert(
+    'task: tombstone blocks stale remote after delete',
+    ids(pullTasks({
+        live: [{ id: 'keep-task' }],
+        remote: [{ id: 'keep-task' }, { id: 'gone-task' }],
+        tombs: ['gone-task']
+    })) === 'keep-task'
+);
+
+assert(
+    'task: in-flight pull does not restore a task removed while fetching',
+    ids(pullTasks({
+        live: [{ id: 'keep-task' }],
+        remote: [{ id: 'keep-task' }, { id: 'gone-task' }],
+        tombs: [],
+        idsAtStart: ['keep-task', 'gone-task']
+    })) === 'keep-task'
+);
+
+assert(
+    'task: new task from another device still arrives',
+    ids(pullTasks({
+        live: [{ id: 'keep-task' }],
+        remote: [{ id: 'keep-task' }, { id: 'new-task' }],
+        tombs: []
+    })) === 'keep-task,new-task'
+);
+
+sync.rememberDeletedTask('task-a');
+const taskState = {
+    lists: [{ id: 'keep-list' }],
+    groups: [],
+    tasks: [{ id: 'keep-task' }],
+    deletedTaskIds: ['task-a']
+};
+applyCloud(taskState, {
+    lists: [{ id: 'keep-list' }],
+    groups: [],
+    tasks: [{ id: 'keep-task' }, { id: 'task-a' }]
+});
+assert('applyCloud: deleted task does not pop back', ids(taskState.tasks) === 'keep-task');
+assert(
+    'pull then apply: task still gone after 3s stale poll',
+    ids(pullTasks({
+        live: taskState.tasks,
+        remote: [{ id: 'keep-task' }, { id: 'task-a' }],
+        tombs: sync.deletedTaskIds()
+    })) === 'keep-task'
+);
+sync.forgetDeletedTask('task-a');
+assert('restore: task tombstone cleared', !sync.deletedTaskIds().includes('task-a'));
 
 if (failed) {
     console.error(`\n${failed} check(s) failed`);
