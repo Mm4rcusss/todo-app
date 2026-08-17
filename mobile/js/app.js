@@ -1672,8 +1672,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let taskDragActive = false;
 
-    function sweepOrphanTodos() {
-        document.querySelectorAll('body > .todo-item').forEach((el) => el.remove());
+    function sweepOrphanTodos(keep) {
+        document.querySelectorAll('body > .todo-item').forEach((el) => {
+            if (el !== keep && !todoList.contains(el)) el.remove();
+        });
     }
 
     function clearTodoMotion(el) {
@@ -1894,7 +1896,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function bindPointerReorder(item) {
         const handle = item.querySelector('.drag-handle');
         handle.addEventListener('pointerdown', (e) => {
-            if (e.button !== 0) return;
+            if (e.button !== 0 || taskDragActive) return;
             e.preventDefault();
             startPointerDrag(item, handle, e);
         });
@@ -1952,6 +1954,7 @@ document.addEventListener('DOMContentLoaded', () => {
         let lifted = false;
         let settled = false;
         let scrollRaf = 0;
+        taskDragActive = true;
 
         const movePlaceholder = (clientY) => {
             const nodes = [...todoList.children].filter((el) => el !== item && el !== placeholder);
@@ -1970,7 +1973,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const lift = () => {
             if (lifted) return;
             lifted = true;
-            taskDragActive = true;
             item.after(placeholder);
             item.classList.add('dragging');
             todoList.classList.add('is-sorting');
@@ -2023,25 +2025,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 placeholder.remove();
                 todoList.classList.remove('is-sorting');
                 taskDragActive = false;
-                sweepOrphanTodos();
+                sweepOrphanTodos(item);
                 if (lifted) updateTaskOrder();
             };
 
-            if (!lifted) {
-                drop();
-                return;
-            }
-
-            const dest = placeholder.getBoundingClientRect();
-            if (!canAnimateReorder() || !placeholder.parentNode) {
-                drop();
-                return;
-            }
-            item.style.transition = 'top 0.16s cubic-bezier(0.22, 1, 0.36, 1), left 0.16s cubic-bezier(0.22, 1, 0.36, 1)';
-            item.style.transform = 'none';
-            item.style.top = `${dest.top}px`;
-            item.style.left = `${dest.left}px`;
-            window.setTimeout(drop, 160);
+            drop();
         };
 
         const end = (ev) => {
@@ -4046,7 +4034,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const wasEditing = Boolean(editSession);
         editSession = null;
-        if (!wasEditing) return;
+        if (!wasEditing || taskDragActive) return;
         renderSidebar();
         renderCalendar();
         renderHeader();
