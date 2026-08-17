@@ -310,6 +310,7 @@ body {
 .lists-nav {
     list-style: none;
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
 }
 
@@ -1109,6 +1110,40 @@ body.login-chip-hidden .login-chip {
     background: rgba(255, 255, 255, 0.12);
 }
 
+.chrome-btn {
+    font-size: 0.82rem;
+    font-weight: 700;
+    font-family: inherit;
+    background: rgba(12, 12, 12, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.38);
+    border-radius: 12px;
+    color: #fff;
+    padding: 0.35rem 0.9rem;
+    min-height: 42px;
+    height: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    cursor: pointer;
+}
+
+body.orbit-mobile .chrome-settings {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 0.38rem);
+    right: 0.85rem;
+    left: auto;
+    bottom: auto;
+    z-index: 36;
+}
+
+body.orbit-mobile:has(.app-wrapper.sidebar-right) .chrome-settings {
+    right: auto;
+    left: 0.85rem;
+}
+
 body:not(.login-chip-hidden) .sidebar-account-link,
 body.orbit-mobile:not(.login-chip-hidden) .sidebar-account-link {
     display: none !important;
@@ -1139,6 +1174,7 @@ body.orbit-mobile:not(.login-chip-hidden) .sidebar-account-link {
 
 .sidebar-settings-btn {
     display: block;
+    flex-shrink: 0;
     width: 100%;
     margin: 0.15rem 0 0.4rem;
     padding: 0.7rem 0.85rem;
@@ -1192,6 +1228,12 @@ body.orbit-mobile:not(.login-chip-hidden) .sidebar-account-link {
 .settings-nav-btn:hover,
 .settings-nav-btn:focus-visible {
     background: rgba(255, 255, 255, 0.12);
+}
+
+a.settings-nav-btn {
+    text-decoration: none;
+    color: inherit;
+    box-sizing: border-box;
 }
 
 .settings-back-btn {
@@ -1453,13 +1495,9 @@ body > .todo-item.dragging {
         padding-bottom: env(safe-area-inset-bottom);
     }
 
-    .calendar-mini {
-        padding: 0.85rem 0.7rem;
-    }
-
-    .calendar-day {
-        min-width: 32px;
-        min-height: 32px;
+    .calendar-mini,
+    .sidebar-footer {
+        display: none;
     }
 
     .widget-pet .pet-frame {
@@ -1503,7 +1541,14 @@ body > .todo-item.dragging {
 
 .mobile-only,
 .phone-only {
-    display: none !important;
+    display: none;
+}
+
+@media (min-width: 769px) {
+    .mobile-only,
+    .phone-only {
+        display: none !important;
+    }
 }
 
 /* Text Buttons */
@@ -2687,7 +2732,7 @@ body.is-previewing-bg #theme-modal {
 body.is-previewing-bg #theme-modal .modal-content {
     width: 100%;
     max-width: none;
-    max-height: min(46vh, 420px);
+    max-height: min(78dvh, 680px);
     border-radius: 24px 24px 0 0;
     margin: 0;
     padding: 1.1rem 1.1rem calc(1rem + env(safe-area-inset-bottom));
@@ -2695,6 +2740,25 @@ body.is-previewing-bg #theme-modal .modal-content {
     background: rgba(12, 12, 16, 0.82);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+body.is-previewing-bg #theme-modal .theme-sheet-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding-bottom: 0.35rem;
+}
+
+body.is-previewing-bg #theme-modal .modal-content > .btn-primary {
+    flex-shrink: 0;
+    position: static;
+    margin-top: 0.75rem;
 }
 
 body.is-previewing-bg #theme-modal .modal-content h3 {
@@ -2849,6 +2913,11 @@ body.orbit-mobile .app-wrapper {
     background-color: transparent;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+}
+
+body.orbit-mobile .sidebar-footer,
+body.orbit-mobile .calendar-mini {
+    display: none;
 }
 
 body.orbit-mobile .app-wrapper.sidebar-mode-dock .sidebar-overlay,
@@ -3090,8 +3159,13 @@ body.orbit-mobile .modal-content {
     max-height: min(88dvh, 720px);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    display: block;
+}
+
+body.orbit-mobile #theme-modal .modal-content {
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 body.orbit-mobile .modal-content > .btn-primary:last-child {
@@ -3099,6 +3173,10 @@ body.orbit-mobile .modal-content > .btn-primary:last-child {
     bottom: 0;
     margin-top: 0.75rem;
     z-index: 2;
+}
+
+body.orbit-mobile #theme-modal .modal-content > .btn-primary:last-child {
+    position: static;
 }
 
 body.orbit-mobile .phone-only {

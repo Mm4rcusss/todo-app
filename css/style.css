@@ -305,6 +305,7 @@ body {
 .lists-nav {
     list-style: none;
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
 }
 
@@ -497,7 +498,8 @@ body.is-signed-in .chrome-login-hint {
     border-color: #fff;
 }
 
-#prefs-btn.chrome-settings {
+#prefs-btn.chrome-settings,
+.chrome-settings {
     position: fixed;
     bottom: 1.5rem;
     left: 1.5rem;
@@ -1188,6 +1190,7 @@ body.orbit-mobile:not(.login-chip-hidden) .sidebar-account-link {
 
 .sidebar-settings-btn {
     display: block;
+    flex-shrink: 0;
     width: 100%;
     margin: 0.15rem 0 0.4rem;
     padding: 0.7rem 0.85rem;
@@ -1241,6 +1244,12 @@ body.orbit-mobile:not(.login-chip-hidden) .sidebar-account-link {
 .settings-nav-btn:hover,
 .settings-nav-btn:focus-visible {
     background: rgba(255, 255, 255, 0.12);
+}
+
+a.settings-nav-btn {
+    text-decoration: none;
+    color: inherit;
+    box-sizing: border-box;
 }
 
 .settings-back-btn {
@@ -1522,19 +1531,34 @@ body > .todo-item.dragging {
         bottom: auto;
     }
 
+    #prefs-btn.chrome-settings,
+    .chrome-settings {
+        top: calc(env(safe-area-inset-top) + 0.55rem);
+        right: 0.85rem;
+        left: auto;
+        bottom: auto;
+        min-height: 44px;
+    }
+
+    body:has(.app-wrapper.sidebar-right) #prefs-btn.chrome-settings,
+    body:has(.app-wrapper.sidebar-right) .chrome-settings {
+        left: 0.85rem;
+        right: auto;
+    }
+
+    .chrome-login-hint {
+        display: none;
+    }
+
     .app-footer {
         gap: 0.75rem;
         flex-wrap: wrap;
         padding-bottom: env(safe-area-inset-bottom);
     }
 
-    .calendar-mini {
-        padding: 0.85rem 0.7rem;
-    }
-
-    .calendar-day {
-        min-width: 32px;
-        min-height: 32px;
+    .calendar-mini,
+    .sidebar-footer {
+        display: none;
     }
 
     .widget-pet .pet-frame {
@@ -1578,7 +1602,14 @@ body > .todo-item.dragging {
 
 .mobile-only,
 .phone-only {
-    display: none !important;
+    display: none;
+}
+
+@media (min-width: 769px) {
+    .mobile-only,
+    .phone-only {
+        display: none !important;
+    }
 }
 
 /* Text Buttons */
@@ -2784,7 +2815,7 @@ body.is-previewing-bg #theme-modal {
 body.is-previewing-bg #theme-modal .modal-content {
     width: 100%;
     max-width: none;
-    max-height: min(46vh, 420px);
+    max-height: min(78dvh, 680px);
     border-radius: 24px 24px 0 0;
     margin: 0;
     padding: 1.1rem 1.1rem calc(1rem + env(safe-area-inset-bottom));
@@ -2792,6 +2823,25 @@ body.is-previewing-bg #theme-modal .modal-content {
     background: rgba(12, 12, 16, 0.82);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+body.is-previewing-bg #theme-modal .theme-sheet-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding-bottom: 0.35rem;
+}
+
+body.is-previewing-bg #theme-modal .modal-content > .btn-primary {
+    flex-shrink: 0;
+    position: static;
+    margin-top: 0.75rem;
 }
 
 body.is-previewing-bg #theme-modal .modal-content h3 {

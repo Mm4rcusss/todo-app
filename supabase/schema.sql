@@ -1,6 +1,7 @@
 -- Orbit cloud sync. Re-run this whole file in the Supabase SQL editor after updates.
 -- Enable Email (magic link) under Authentication > Providers.
 -- Add redirect URLs for your GitHub Pages origin and local testing.
+-- This also creates the private orbit-media bucket for per-account wallpapers.
 
 create table if not exists public.groups (
     id text primary key,
@@ -306,3 +307,54 @@ begin
         execute 'alter publication supabase_realtime add table public.list_members';
     end if;
 end $$;
+
+-- Per-account wallpaper files. Path: {user_id}/wallpapers/{id}.jpg
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+    'orbit-media',
+    'orbit-media',
+    false,
+    2097152,
+    array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update set
+    public = excluded.public,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists orbit_media_select on storage.objects;
+drop policy if exists orbit_media_insert on storage.objects;
+drop policy if exists orbit_media_update on storage.objects;
+drop policy if exists orbit_media_delete on storage.objects;
+
+create policy orbit_media_select on storage.objects
+    for select to authenticated
+    using (
+        bucket_id = 'orbit-media'
+        and (storage.foldername(name))[1] = auth.uid()::text
+    );
+
+create policy orbit_media_insert on storage.objects
+    for insert to authenticated
+    with check (
+        bucket_id = 'orbit-media'
+        and (storage.foldername(name))[1] = auth.uid()::text
+    );
+
+create policy orbit_media_update on storage.objects
+    for update to authenticated
+    using (
+        bucket_id = 'orbit-media'
+        and (storage.foldername(name))[1] = auth.uid()::text
+    )
+    with check (
+        bucket_id = 'orbit-media'
+        and (storage.foldername(name))[1] = auth.uid()::text
+    );
+
+create policy orbit_media_delete on storage.objects
+    for delete to authenticated
+    using (
+        bucket_id = 'orbit-media'
+        and (storage.foldername(name))[1] = auth.uid()::text
+    );

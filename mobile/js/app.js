@@ -1279,6 +1279,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderCalendar() {
+        if (!calendarMini) return;
         const date = parseLocalDate(state.viewDate);
         const year = date.getFullYear();
         const month = date.getMonth();
@@ -1332,6 +1333,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function refreshCalendarMarkers() {
+        if (!calendarMini) return;
         if (!calendarMini.querySelector('.calendar-day')) {
             renderCalendar();
             return;
@@ -2330,6 +2332,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         renderBitsControls();
         renderWallpaperControls();
+        renderWallpaperQuota();
+        void backfillWallpaperBytes();
     }
 
     function renderBitsControls() {
@@ -2462,6 +2466,57 @@ document.addEventListener('DOMContentLoaded', () => {
         wallpaperStatus.textContent = message || '';
     }
 
+    function dataUrlBytes(dataUrl) {
+        const body = String(dataUrl || '').split(',')[1] || '';
+        if (!body) return 0;
+        const pad = body.endsWith('==') ? 2 : body.endsWith('=') ? 1 : 0;
+        return Math.max(0, Math.floor(body.length * 3 / 4) - pad);
+    }
+
+    function formatStorageBytes(bytes) {
+        if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+        if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+        return `${bytes} B`;
+    }
+
+    function wallpaperQuotaNow(extraBytes = 0, extraCount = 0) {
+        if (window.OrbitSync?.wallpaperQuota) {
+            return window.OrbitSync.wallpaperQuota(state.customThemes, extraBytes, extraCount);
+        }
+        const maxCount = 8;
+        const maxBytes = 10 * 1024 * 1024;
+        const count = (state.customThemes || []).length + extraCount;
+        const used = (state.customThemes || []).reduce((sum, theme) => sum + (Number(theme.bytes) || 0), 0) + extraBytes;
+        return { count, bytes: used, maxCount, maxBytes, ok: count <= maxCount && used <= maxBytes };
+    }
+
+    function renderWallpaperQuota() {
+        const el = document.getElementById('wallpaper-quota');
+        if (!el) return;
+        const quota = wallpaperQuotaNow();
+        el.textContent = `${quota.count} / ${quota.maxCount} photos · ${formatStorageBytes(quota.bytes)} / ${formatStorageBytes(quota.maxBytes)}. Sign in to sync these across devices.`;
+    }
+
+    let wallpaperByteFill = false;
+    async function backfillWallpaperBytes() {
+        if (wallpaperByteFill) return;
+        wallpaperByteFill = true;
+        let changed = false;
+        for (const theme of state.customThemes || []) {
+            if (Number(theme.bytes) > 0) continue;
+            try {
+                const dataUrl = await wallpaperGet(theme.id);
+                if (!dataUrl) continue;
+                theme.bytes = dataUrlBytes(dataUrl);
+                changed = true;
+            } catch { /* ignore */ }
+        }
+        if (changed) {
+            saveState();
+            renderWallpaperQuota();
+        }
+    }
+
     async function handleWallpaperUpload(file) {
         const list = currentList();
         if (!list || !file) return;
@@ -2469,24 +2524,47 @@ document.addEventListener('DOMContentLoaded', () => {
             setWallpaperStatus('Please choose an image file.');
             return;
         }
+        const countCheck = wallpaperQuotaNow(0, 1);
+        if (!countCheck.ok && countCheck.count > countCheck.maxCount) {
+            setWallpaperStatus(`You can save ${countCheck.maxCount} photos per account.`);
+            return;
+        }
         setWallpaperStatus('Optimizing wallpaper…');
         try {
             const suggested = file.name.replace(/\.[^.]+$/, '').slice(0, 32) || 'Wallpaper';
             const named = await showInput('Name this wallpaper', 'e.g. Night sky', suggested);
             const dataUrl = await compressImage(file);
+            const bytes = dataUrlBytes(dataUrl);
+            const quota = wallpaperQuotaNow(bytes, 1);
+            if (!quota.ok) {
+                if (quota.count > quota.maxCount) {
+                    setWallpaperStatus(`You can save ${quota.maxCount} photos per account.`);
+                } else {
+                    setWallpaperStatus(`That photo would go over ${formatStorageBytes(quota.maxBytes)} of wallpaper storage.`);
+                }
+                return;
+            }
             const id = uid('custom_');
             await wallpaperPut(id, dataUrl);
             const custom = {
                 id,
                 name: (named || suggested).slice(0, 32),
-                color: list.color || DEFAULT_ACCENT
+                color: list.color || DEFAULT_ACCENT,
+                bytes,
+                updatedAt: new Date().toISOString()
             };
             state.customThemes.push(custom);
             list.theme = id;
             saveState();
             await applyTheme(id);
             renderThemeOptions();
-            setWallpaperStatus('Wallpaper added to this list.');
+            try {
+                const blob = await (await fetch(dataUrl)).blob();
+                await window.OrbitSync?.uploadWallpaper?.(id, blob);
+                setWallpaperStatus('Wallpaper added. Signed-in accounts sync it across devices.');
+            } catch {
+                setWallpaperStatus('Wallpaper saved on this device. Cloud photo upload is not set up yet.');
+            }
         } catch (err) {
             setWallpaperStatus(err.message || 'Could not save that wallpaper.');
         }
@@ -2499,6 +2577,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         delete state.wallpaperAdjust[themeId];
         try { await wallpaperDel(themeId); } catch { /* ignore */ }
+        try { await window.OrbitSync?.deleteWallpaper?.(themeId); } catch { /* ignore */ }
         saveState();
         applyTheme(currentList()?.theme || DEFAULT_THEME);
         renderThemeOptions();
@@ -3866,6 +3945,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (localPetChoice) state.settings.petChoice = localPetChoice;
         }
         if (remote.bitsParams) state.bitsParams = remote.bitsParams;
+        if (Array.isArray(remote.customThemes)) state.customThemes = remote.customThemes;
+        if (remote.wallpaperAdjust && typeof remote.wallpaperAdjust === 'object') {
+            state.wallpaperAdjust = remote.wallpaperAdjust;
+        }
         applyShellSettings();
         readSidebarTree();
         if (state.lists.some((list) => sameId(list.id, keepCurrent))) {
@@ -3881,6 +3964,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderHeader();
         renderTodos();
         applyTheme(currentList()?.theme || DEFAULT_THEME);
+        renderThemeOptions();
         renderWidgets();
         syncLayoutModal();
         refreshAccountUi();
@@ -3892,6 +3976,12 @@ document.addEventListener('DOMContentLoaded', () => {
             getState: () => state,
             applyCloud: applyCloudState,
             persistLocal: () => saveState({ skipSync: true }),
+            wallpaperGet,
+            wallpaperPut,
+            onMedia: () => {
+                renderThemeOptions();
+                applyTheme(currentList()?.theme || DEFAULT_THEME);
+            },
             onAuth: () => { refreshAccountUi(); },
             onStatus: () => { refreshAccountUi(); },
             onInvitePending: () => {

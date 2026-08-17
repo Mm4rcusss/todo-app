@@ -294,6 +294,121 @@
         return copy;
     }
 
+    const WALLPAPER_MAX = 8;
+    const WALLPAPER_BYTES = 10 * 1024 * 1024;
+    const MEDIA_BUCKET = 'orbit-media';
+
+    function wallpaperQuota(themes, extraBytes = 0, extraCount = 0) {
+        const items = themes || [];
+        const count = items.length + extraCount;
+        const bytes = items.reduce((sum, theme) => sum + (Number(theme.bytes) || 0), 0) + extraBytes;
+        return {
+            count,
+            bytes,
+            maxCount: WALLPAPER_MAX,
+            maxBytes: WALLPAPER_BYTES,
+            ok: count <= WALLPAPER_MAX && bytes <= WALLPAPER_BYTES
+        };
+    }
+
+    function themesForCloud(themes) {
+        return (themes || []).map((theme) => ({
+            id: String(theme.id),
+            name: theme.name || 'Wallpaper',
+            color: theme.color || '#b19eef',
+            bytes: Number(theme.bytes) || 0,
+            updatedAt: theme.updatedAt || nowIso()
+        })).slice(0, WALLPAPER_MAX);
+    }
+
+    function wallpaperObjectPath(userId, id) {
+        return `${userId}/wallpapers/${String(id)}.jpg`;
+    }
+
+    function dataUrlToBlob(dataUrl) {
+        const parts = String(dataUrl || '').split(',');
+        const head = parts[0] || '';
+        const body = parts[1] || '';
+        const mime = /data:([^;]+)/.exec(head)?.[1] || 'image/jpeg';
+        const binary = atob(body);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        return new Blob([bytes], { type: mime });
+    }
+
+    function blobToDataUrl(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error || new Error('Could not read that photo.'));
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    async function uploadWallpaperFile(id, blob) {
+        const sb = await getClient();
+        const user = await sessionUser();
+        if (!sb || !user || !blob) return;
+        if (syncPrefs().mode === 'off') return;
+        const { error } = await sb.storage.from(MEDIA_BUCKET).upload(
+            wallpaperObjectPath(user.id, id),
+            blob,
+            { upsert: true, contentType: blob.type || 'image/jpeg', cacheControl: '3600' }
+        );
+        if (error) throw error;
+    }
+
+    async function deleteWallpaperFile(id) {
+        const sb = await getClient();
+        const user = await sessionUser();
+        if (!sb || !user || !id) return;
+        const { error } = await sb.storage.from(MEDIA_BUCKET).remove([wallpaperObjectPath(user.id, id)]);
+        if (error && !/not found|404/i.test(error.message || '')) throw error;
+    }
+
+    async function syncWallpaperMedia() {
+        try {
+            const sb = await getClient();
+            const user = await sessionUser();
+            if (!sb || !user || syncPrefs().mode === 'off') return;
+            const state = hooks.getState?.() || {};
+            const themes = state.customThemes || [];
+            let remoteNames = new Set();
+            const listed = await sb.storage.from(MEDIA_BUCKET).list(`${user.id}/wallpapers`, { limit: 50 });
+            if (!listed.error) {
+                remoteNames = new Set((listed.data || []).map((row) => String(row.name || '').replace(/\.jpg$/i, '')));
+            }
+
+            for (const theme of themes) {
+                const id = String(theme.id);
+                if (remoteNames.has(id)) continue;
+                const dataUrl = await hooks.wallpaperGet?.(id);
+                if (!dataUrl) continue;
+                try {
+                    await uploadWallpaperFile(id, dataUrlToBlob(dataUrl));
+                } catch (err) {
+                    console.warn('Orbit wallpaper upload', err);
+                }
+            }
+
+            for (const theme of themes) {
+                const id = String(theme.id);
+                const local = await hooks.wallpaperGet?.(id);
+                if (local) continue;
+                try {
+                    const { data, error } = await sb.storage.from(MEDIA_BUCKET).download(wallpaperObjectPath(user.id, id));
+                    if (error || !data) continue;
+                    await hooks.wallpaperPut?.(id, await blobToDataUrl(data));
+                } catch (err) {
+                    console.warn('Orbit wallpaper download', err);
+                }
+            }
+            hooks.onMedia?.();
+        } catch (err) {
+            console.warn('Orbit wallpaper sync', err);
+        }
+    }
+
     async function getClient() {
         if (!isConfigured() || !global.supabase?.createClient) return null;
         if (client) return client;
@@ -614,6 +729,7 @@
         if (ensureHomeListId(local, user.id) || ensureDefaultTagIds(local, user.id)) hooks.persistLocal?.();
         const idsAtStart = new Set((local.lists || []).map((list) => String(list.id)));
         const groupIdsAtStart = new Set((local.groups || []).map((group) => String(group.id)));
+        const themeIdsAtStart = new Set((local.customThemes || []).map((theme) => String(theme.id)));
         rememberKnown('list', idsAtStart);
         rememberKnown('group', groupIdsAtStart);
 
@@ -705,6 +821,8 @@
         const prefs = prefsRes.data;
         let settings = live.settings;
         let bitsParams = live.bitsParams;
+        let customThemes = live.customThemes || [];
+        let wallpaperAdjust = live.wallpaperAdjust || {};
         if (prefs && stamp(prefs.updated_at) >= stamp(live.settings?.updatedAt)) {
             const localPets = live.settings?.pets;
             const localPetChoice = live.settings?.petChoice;
@@ -712,7 +830,17 @@
             if (localPets) settings.pets = localPets;
             if (localPetChoice) settings.petChoice = localPetChoice;
             bitsParams = prefs.bits_params && typeof prefs.bits_params === 'object' ? prefs.bits_params : bitsParams;
+            if (prefs.wallpaper_adjust && typeof prefs.wallpaper_adjust === 'object') {
+                wallpaperAdjust = { ...(live.wallpaperAdjust || {}), ...prefs.wallpaper_adjust };
+            }
         }
+        const liveThemeIds = new Set((live.customThemes || []).map((theme) => String(theme.id)));
+        const remoteThemes = Array.isArray(prefs?.custom_themes) ? prefs.custom_themes : [];
+        customThemes = mergeById(live.customThemes || [], remoteThemes).filter((theme) => {
+            const id = String(theme.id);
+            if (themeIdsAtStart.has(id) && !liveThemeIds.has(id)) return false;
+            return true;
+        }).slice(0, WALLPAPER_MAX);
 
         let currentListId = live.currentListId;
         const fresh = hooks.getState() || live;
@@ -763,8 +891,11 @@
             groups: keptGroups,
             settings,
             bitsParams,
+            customThemes,
+            wallpaperAdjust,
             currentListId: cloudState.currentListId
         });
+        void syncWallpaperMedia();
     }
 
     async function push() {
@@ -961,8 +1092,8 @@
             user_id: user.id,
             settings: settingsForCloud(state.settings),
             bits_params: state.bitsParams || {},
-            wallpaper_adjust: {},
-            custom_themes: [],
+            wallpaper_adjust: state.wallpaperAdjust && typeof state.wallpaperAdjust === 'object' ? state.wallpaperAdjust : {},
+            custom_themes: themesForCloud(state.customThemes),
             current_list_id: state.currentListId || null,
             updated_at: nowIso()
         }, { onConflict: 'user_id' });
@@ -971,6 +1102,7 @@
         lastSyncAt = nowIso();
         lastError = '';
         pullBlocked = false;
+        void syncWallpaperMedia();
     }
 
     async function run(kind, options = {}) {
@@ -1082,6 +1214,16 @@
             if (syncPrefs().mode === 'live') return startLive();
             stopLive();
             return Promise.resolve();
+        },
+        wallpaperQuota,
+        async uploadWallpaper(id, blob) {
+            await uploadWallpaperFile(id, blob);
+        },
+        async deleteWallpaper(id) {
+            await deleteWallpaperFile(id);
+        },
+        async syncWallpapers() {
+            await syncWallpaperMedia();
         },
         _test: {
             filterPulledLists,

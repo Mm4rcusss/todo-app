@@ -33,6 +33,7 @@
         </button>
         <button type="button" id="hide-login-chip" class="login-chip-hide" aria-label="Hide login button">×</button>
     </div>
+    <button type="button" class="chrome-btn chrome-settings js-open-settings" aria-label="Open settings">Settings</button>
 
     <div class="app-wrapper sidebar-mode-overlay">
         <button type="button" id="menu-btn" class="btn-icon menu-btn" aria-label="Open lists" aria-expanded="false" aria-controls="sidebar">
@@ -45,7 +46,7 @@
                 <path d="M18 6L6 18M6 6L18 18" />
             </svg>
         </button>
-        <aside class="sidebar" id="sidebar" aria-label="Lists and calendar">
+        <aside class="sidebar" id="sidebar" aria-label="Lists">
             <div class="sidebar-header">
                 <h2>Lists</h2>
                 <button type="button" id="edit-lists-btn" class="sidebar-edit-toggle" aria-pressed="false" aria-label="Edit lists">Edit</button>
@@ -86,9 +87,6 @@
                 <span class="account-btn-label">Log in</span>
             </button>
             <button type="button" id="prefs-btn" class="sidebar-settings-btn js-open-settings">Settings</button>
-            <div class="sidebar-footer">
-                <div class="calendar-mini" id="calendar-mini"></div>
-            </div>
         </aside>
         <div id="sidebar-overlay" class="sidebar-overlay"></div>
 
@@ -139,6 +137,7 @@
 
     <div id="theme-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="theme-modal-title">
         <div class="modal-content">
+            <div class="theme-sheet-scroll">
             <h3 id="theme-modal-title">Background</h3>
             <p class="theme-preview-hint">The list window is hidden so you can see the background. Swipe the looks, then use the sliders.</p>
             <p class="theme-section-label">Photos & gradients</p>
@@ -168,7 +167,9 @@
                 <input type="file" id="wallpaper-input" accept="image/*" hidden>
                 <span>Upload your own wallpaper</span>
             </label>
+            <p id="wallpaper-quota" class="setting-hint">8 photos or 10 MB per account. Sign in to sync them across devices.</p>
             <p id="wallpaper-status" class="theme-upload-status" hidden></p>
+            </div>
             <button type="button" id="close-theme-modal" class="btn-primary">Done</button>
         </div>
     </div>
@@ -258,6 +259,10 @@
                     <strong>History</strong>
                     <span>Restore recently deleted lists or groups</span>
                 </button>
+                <a class="settings-nav-btn" href="../">
+                    <strong>Switch to desktop view</strong>
+                    <span>Same lists, in the computer layout</span>
+                </a>
             </div>
             <div id="settings-panel-sync" class="settings-panel" hidden>
                 <button type="button" class="settings-back-btn">← All settings</button>
@@ -320,7 +325,7 @@
             <div id="settings-panel-layout" class="settings-panel" hidden>
                 <button type="button" class="settings-back-btn">← All settings</button>
                 <div class="setting-group">
-                    <a class="settings-link" href="../">Switch to website</a>
+                    <a class="settings-link" href="../">Switch to desktop view</a>
                     <p class="setting-hint">Same lists on this browser.</p>
                 </div>
                 <div class="setting-group" id="task-scale-group">
