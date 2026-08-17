@@ -12,8 +12,11 @@
     let liveChannel = null;
     const TOMBSTONE_KEY = 'orbit_deleted_lists';
     const GROUP_TOMBSTONE_KEY = 'orbit_deleted_groups';
+    const KNOWN_LISTS_KEY = 'orbit_known_lists';
+    const KNOWN_GROUPS_KEY = 'orbit_known_groups';
     const sessionListTombs = new Set();
     const sessionGroupTombs = new Set();
+    let pullBlocked = false;
 
     function loadStoredIds(key) {
         try {
@@ -61,6 +64,7 @@
     function rememberDeleted(id) {
         const extras = [String(id)];
         if (isHomeListId(id)) extras.push('default');
+        rememberKnown('list', extras);
         return rememberIds(TOMBSTONE_KEY, sessionListTombs, extras, 'deletedListIds');
     }
 
@@ -71,6 +75,7 @@
     }
 
     function rememberDeletedGroup(id) {
+        rememberKnown('group', [String(id)]);
         return rememberIds(GROUP_TOMBSTONE_KEY, sessionGroupTombs, [String(id)], 'deletedGroupIds');
     }
 
@@ -121,22 +126,81 @@
         return groupTombstoneSet(state);
     }
 
-    function filterPulledLists(merged, { tombs, idsAtStart, liveIds, remoteIds }) {
+    function loadKnown(key) {
+        return new Set(loadStoredIds(key));
+    }
+
+    function saveKnown(key, ids) {
+        const next = [...new Set([...ids].map(String))].slice(-500);
+        try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* ignore */ }
+        return new Set(next);
+    }
+
+    function rememberKnown(kind, ids) {
+        const key = kind === 'group' ? KNOWN_GROUPS_KEY : KNOWN_LISTS_KEY;
+        const next = loadKnown(key);
+        (ids || []).forEach((id) => {
+            if (id) next.add(String(id));
+        });
+        return saveKnown(key, next);
+    }
+
+    function knownListIds(state) {
+        const next = loadKnown(KNOWN_LISTS_KEY);
+        (state?.lists || []).forEach((list) => {
+            if (list?.id) next.add(String(list.id));
+        });
+        (state?.deletedListIds || []).forEach((id) => next.add(String(id)));
+        return next;
+    }
+
+    function knownGroupIds(state) {
+        const next = loadKnown(KNOWN_GROUPS_KEY);
+        (state?.groups || []).forEach((group) => {
+            if (group?.id) next.add(String(group.id));
+        });
+        (state?.deletedGroupIds || []).forEach((id) => next.add(String(id)));
+        return next;
+    }
+
+    function noteLocalDelete(ids, kind = 'list') {
+        pullBlocked = true;
+        rememberKnown(kind, Array.isArray(ids) ? ids : [ids]);
+    }
+
+    function syncPrefs() {
+        const settings = hooks.getState?.()?.settings || {};
+        const mode = settings.syncMode === 'off' || settings.syncMode === 'push' ? settings.syncMode : 'live';
+        return {
+            mode,
+            lists: settings.syncLists !== false,
+            groups: settings.syncGroups !== false
+        };
+    }
+
+    function listIsLocalOnly(list) {
+        return list?.sync === false;
+    }
+
+    function filterPulledLists(merged, { tombs, idsAtStart, liveIds, remoteIds, knownIds, localOnlyIds }) {
         return (merged || []).filter((list) => {
             const id = String(list.id);
             if (listIsDeleted(id, tombs)) return false;
+            if (localOnlyIds?.has(id)) return liveIds.has(id);
             if (idsAtStart.has(id) && !liveIds.has(id)) return false;
+            if (knownIds?.has(id) && !liveIds.has(id)) return false;
             if (remoteIds.has(id)) return !listIsDeleted(id, tombs);
             if (list.role === 'editor') return false;
             return !list.ownerId;
         });
     }
 
-    function filterPulledGroups(merged, { tombs, idsAtStart, liveIds, remoteIds }) {
+    function filterPulledGroups(merged, { tombs, idsAtStart, liveIds, remoteIds, knownIds }) {
         return (merged || []).filter((group) => {
             const id = String(group.id);
             if (groupIsDeleted(id, tombs)) return false;
             if (idsAtStart.has(id) && !liveIds.has(id)) return false;
+            if (knownIds?.has(id) && !liveIds.has(id)) return false;
             if (remoteIds.has(id)) return !groupIsDeleted(id, tombs);
             return liveIds.has(id);
         });
@@ -224,6 +288,9 @@
         delete copy.loginChip;
         delete copy.optimizedMode;
         delete copy.trash;
+        delete copy.syncMode;
+        delete copy.syncLists;
+        delete copy.syncGroups;
         return copy;
     }
 
@@ -450,6 +517,7 @@
             list.role !== 'editor'
             && (!list.ownerId || String(list.ownerId) === String(userId))
             && !listIsDeleted(list.id, blocked)
+            && !listIsLocalOnly(list)
         ));
     }
 
@@ -539,11 +607,15 @@
         const sb = await getClient();
         const user = await sessionUser();
         if (!sb || !user || !hooks.getState || !hooks.applyCloud) return;
+        const prefsNow = syncPrefs();
+        if (prefsNow.mode === 'off') return;
 
         const local = hooks.getState();
         if (ensureHomeListId(local, user.id) || ensureDefaultTagIds(local, user.id)) hooks.persistLocal?.();
         const idsAtStart = new Set((local.lists || []).map((list) => String(list.id)));
         const groupIdsAtStart = new Set((local.groups || []).map((group) => String(group.id)));
+        rememberKnown('list', idsAtStart);
+        rememberKnown('group', groupIdsAtStart);
 
         const [listsRes, membersRes, tasksRes, tagsRes, groupsRes, prefsRes] = await Promise.all([
             sb.from('lists').select('*'),
@@ -590,29 +662,45 @@
         const deleted = new Set((live.deletedTaskIds || []).map(String));
         const remoteIds = new Set(remoteLists.map((list) => String(list.id)));
         const remoteGroupIds = new Set(remoteGroups.map((group) => String(group.id)));
+        const knownLists = knownListIds(live);
+        const knownGroups = knownGroupIds(live);
+        const localOnlyIds = new Set(
+            (live.lists || []).filter(listIsLocalOnly).map((list) => String(list.id))
+        );
+        const contentPrefs = syncPrefs();
 
-        const lists = filterPulledLists(mergeById(live.lists || [], remoteLists), {
-            tombs: deletedLists,
-            idsAtStart,
-            liveIds,
-            remoteIds
-        });
+        const lists = contentPrefs.lists
+            ? filterPulledLists(mergeById(live.lists || [], remoteLists), {
+                tombs: deletedLists,
+                idsAtStart,
+                liveIds,
+                remoteIds,
+                knownIds: knownLists,
+                localOnlyIds
+            })
+            : [...(live.lists || [])];
 
         const remoteTaskIds = new Set(remoteTasks.map((task) => String(task.id)));
         const listIds = new Set(lists.map((list) => String(list.id)));
-        const tasks = mergeById(live.tasks || [], remoteTasks).filter((task) => {
-            const id = String(task.id);
-            if (!listIds.has(String(task.listId)) || deleted.has(id) || listIsDeleted(task.listId, deletedLists)) return false;
-            if (remoteTaskIds.has(id)) return true;
-            return !previousSync || stamp(task.updatedAt) >= stamp(previousSync);
-        });
+        const tasks = contentPrefs.lists
+            ? mergeById(live.tasks || [], remoteTasks).filter((task) => {
+                const id = String(task.id);
+                if (!listIds.has(String(task.listId)) || deleted.has(id) || listIsDeleted(task.listId, deletedLists)) return false;
+                if (localOnlyIds.has(String(task.listId))) return true;
+                if (remoteTaskIds.has(id)) return true;
+                return !previousSync || stamp(task.updatedAt) >= stamp(previousSync);
+            })
+            : [...(live.tasks || [])];
         const tags = mergeById(live.tags || [], remoteTags);
-        const groups = filterPulledGroups(mergeById(live.groups || [], remoteGroups), {
-            tombs: deletedGroups,
-            idsAtStart: groupIdsAtStart,
-            liveIds: liveGroupIds,
-            remoteIds: remoteGroupIds
-        });
+        const groups = contentPrefs.groups
+            ? filterPulledGroups(mergeById(live.groups || [], remoteGroups), {
+                tombs: deletedGroups,
+                idsAtStart: groupIdsAtStart,
+                liveIds: liveGroupIds,
+                remoteIds: remoteGroupIds,
+                knownIds: knownGroups
+            })
+            : [...(live.groups || [])];
 
         const prefs = prefsRes.data;
         let settings = live.settings;
@@ -630,14 +718,31 @@
         const fresh = hooks.getState() || live;
         const tombsNow = expandTombs(fresh, user.id);
         const groupTombsNow = expandGroupTombs(fresh);
+        const freshListIds = new Set((fresh.lists || []).map((list) => String(list.id)));
+        const freshGroupIds = new Set((fresh.groups || []).map((group) => String(group.id)));
+        const knownNow = knownListIds(fresh);
+        const knownGroupsNow = knownGroupIds(fresh);
         const cloudState = { lists, tasks, currentListId };
         ensureHomeListId(cloudState, user.id);
-        cloudState.lists = (cloudState.lists || []).filter((list) => !listIsDeleted(list.id, tombsNow));
+        cloudState.lists = (cloudState.lists || []).filter((list) => {
+            const id = String(list.id);
+            if (listIsDeleted(id, tombsNow)) return false;
+            if (knownNow.has(id) && !freshListIds.has(id)) return false;
+            return true;
+        }).map((list) => {
+            const localList = (fresh.lists || []).find((item) => String(item.id) === String(list.id));
+            return listIsLocalOnly(localList) ? localList : list;
+        });
         const keptListIds = new Set((cloudState.lists || []).map((list) => String(list.id)));
         cloudState.tasks = (cloudState.tasks || []).filter((task) => (
             !listIsDeleted(task.listId, tombsNow) && keptListIds.has(String(task.listId))
         ));
-        const keptGroups = (groups || []).filter((group) => !groupIsDeleted(group.id, groupTombsNow));
+        const keptGroups = (groups || []).filter((group) => {
+            const id = String(group.id);
+            if (groupIsDeleted(id, groupTombsNow)) return false;
+            if (knownGroupsNow.has(id) && !freshGroupIds.has(id)) return false;
+            return true;
+        });
         const liveCurrent = String(fresh.currentListId || live.currentListId || '');
         if (keptListIds.has(liveCurrent)) {
             cloudState.currentListId = fresh.currentListId || live.currentListId;
@@ -649,6 +754,8 @@
 
         lastSyncAt = nowIso();
         lastError = '';
+        rememberKnown('list', keptListIds);
+        rememberKnown('group', keptGroups.map((group) => group.id));
         hooks.applyCloud({
             lists: cloudState.lists,
             tasks: cloudState.tasks,
@@ -664,14 +771,20 @@
         const sb = await getClient();
         const user = await sessionUser();
         if (!sb || !user || !hooks.getState) return;
+        const prefsNow = syncPrefs();
+        if (prefsNow.mode === 'off') return;
         const state = hooks.getState();
         if (ensureHomeListId(state, user.id) || ensureDefaultTagIds(state, user.id)) hooks.persistLocal?.();
+        rememberKnown('list', (state.lists || []).map((list) => list.id));
+        rememberKnown('group', (state.groups || []).map((group) => group.id));
 
         await deleteTombstonedLists(sb, state, user.id);
-        const owned = await saveOwnedLists(sb, hooks.getState(), user.id);
+        const owned = prefsNow.lists ? await saveOwnedLists(sb, hooks.getState(), user.id) : [];
         const afterLists = hooks.getState();
         const blocked = expandTombs(afterLists, user.id);
-        const editable = (afterLists.lists || []).filter((list) => !listIsDeleted(list.id, blocked));
+        const editable = prefsNow.lists
+            ? (afterLists.lists || []).filter((list) => !listIsDeleted(list.id, blocked) && !listIsLocalOnly(list))
+            : [];
         const editableIds = editable.map((list) => String(list.id));
 
         const deletedIds = (state.deletedTaskIds || []).map(String).filter(Boolean);
@@ -708,7 +821,9 @@
         const groupState = hooks.getState();
         await deleteTombstonedGroups(sb, groupState, user.id);
         const groupTombs = expandGroupTombs(groupState);
-        const liveGroups = (groupState.groups || []).filter((group) => !groupIsDeleted(group.id, groupTombs));
+        const liveGroups = prefsNow.groups
+            ? (groupState.groups || []).filter((group) => !groupIsDeleted(group.id, groupTombs))
+            : [];
         const groups = liveGroups.map((group, index) => ({
             id: String(group.id),
             user_id: user.id,
@@ -748,18 +863,20 @@
         await deleteTombstonedLists(sb, afterGroups, user.id);
         await deleteTombstonedGroups(sb, afterGroups, user.id);
 
-        const { data: remoteGroups } = await sb.from('groups').select('id').eq('user_id', user.id);
-        const keptGroupIds = new Set(
-            (afterGroups.groups || [])
-                .filter((group) => !groupIsDeleted(group.id, expandGroupTombs(afterGroups)))
-                .map((group) => String(group.id))
-        );
-        const extraGroups = (remoteGroups || [])
-            .map((row) => row.id)
-            .filter((id) => !keptGroupIds.has(String(id)) || groupIsDeleted(id, expandGroupTombs(afterGroups)));
-        if (extraGroups.length) {
-            const { error } = await sb.from('groups').delete().eq('user_id', user.id).in('id', extraGroups);
-            if (error) throw error;
+        if (prefsNow.groups) {
+            const { data: remoteGroups } = await sb.from('groups').select('id').eq('user_id', user.id);
+            const keptGroupIds = new Set(
+                (afterGroups.groups || [])
+                    .filter((group) => !groupIsDeleted(group.id, expandGroupTombs(afterGroups)))
+                    .map((group) => String(group.id))
+            );
+            const extraGroups = (remoteGroups || [])
+                .map((row) => row.id)
+                .filter((id) => !keptGroupIds.has(String(id)) || groupIsDeleted(id, expandGroupTombs(afterGroups)));
+            if (extraGroups.length) {
+                const { error } = await sb.from('groups').delete().eq('user_id', user.id).in('id', extraGroups);
+                if (error) throw error;
+            }
         }
 
         const ownedIds = new Set(owned.map((list) => String(list.id)));
@@ -853,10 +970,13 @@
 
         lastSyncAt = nowIso();
         lastError = '';
+        pullBlocked = false;
     }
 
-    async function run(kind) {
+    async function run(kind, options = {}) {
         if (!kind) return;
+        const prefsNow = syncPrefs();
+        if (prefsNow.mode === 'off' && !options.force) return;
         if (busy) {
             pendingKind = mergeKinds(pendingKind, kind);
             return;
@@ -868,7 +988,8 @@
                 const next = pendingKind;
                 pendingKind = null;
                 if (next === 'push' || next === 'both') await push();
-                if (next === 'pull' || next === 'both') await pull();
+                const allowPull = options.force || (!pullBlocked && prefsNow.mode === 'live');
+                if ((next === 'pull' || next === 'both') && allowPull) await pull();
             }
         } catch (err) {
             lastError = formatError(err);
@@ -877,12 +998,13 @@
         } finally {
             busy = false;
             hooks.onStatus?.();
-            if (pendingKind) run(pendingKind);
+            if (pendingKind) run(pendingKind, options);
         }
     }
 
     function schedulePull() {
         if (!isConfigured() || !ready) return;
+        if (pullBlocked || syncPrefs().mode !== 'live') return;
         sessionUser().then((user) => {
             if (!user) return;
             if (pushTimer) {
@@ -906,6 +1028,7 @@
 
     async function startLive() {
         stopLive();
+        if (syncPrefs().mode !== 'live') return;
         const sb = await getClient();
         const user = await sessionUser();
         if (!sb || !user) return;
@@ -922,6 +1045,7 @@
 
     function schedulePush() {
         if (!isConfigured() || !ready) return;
+        if (syncPrefs().mode === 'off') return;
         clearTimeout(pushTimer);
         pushTimer = global.setTimeout(() => {
             pushTimer = 0;
@@ -942,6 +1066,7 @@
         forgetDeleted,
         rememberDeletedGroup,
         forgetDeletedGroup,
+        noteLocalDelete,
         listIsDeleted,
         groupIsDeleted,
         deletedListIds() {
@@ -949,6 +1074,14 @@
         },
         deletedGroupIds() {
             return [...groupTombstoneSet(hooks.getState?.())];
+        },
+        syncMode() {
+            return syncPrefs().mode;
+        },
+        applySyncMode() {
+            if (syncPrefs().mode === 'live') return startLive();
+            stopLive();
+            return Promise.resolve();
         },
         _test: {
             filterPulledLists,
@@ -970,8 +1103,19 @@
             sb.auth.onAuthStateChange(async (event) => {
                 if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
                     await OrbitSync.consumeInviteFromUrl();
-                    await run('both');
-                    await startLive();
+                    const prefsNow = syncPrefs();
+                    if (prefsNow.mode === 'off') {
+                        stopLive();
+                    } else if (event === 'SIGNED_IN') {
+                        await run('both', { force: true });
+                        await startLive();
+                    } else if (prefsNow.mode === 'live') {
+                        await run(event === 'TOKEN_REFRESHED' ? 'push' : 'both');
+                        await startLive();
+                    } else {
+                        await run('push');
+                        stopLive();
+                    }
                 }
                 if (event === 'SIGNED_OUT') {
                     stopLive();
@@ -1024,7 +1168,9 @@
         },
         schedulePush,
         async syncNow() {
-            await run('both');
+            if (syncPrefs().mode === 'off') return;
+            pullBlocked = false;
+            await run('both', { force: true });
         },
         async pushNow() {
             await run('push');

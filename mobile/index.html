@@ -230,6 +230,10 @@
                     <span id="account-nav-hint">Sync this device across phone and computer</span>
                 </button>
                 <button type="button" id="show-login-chip-btn" class="settings-link">Show login button</button>
+                <button type="button" class="settings-nav-btn" data-settings-panel="sync">
+                    <strong>Sync</strong>
+                    <span>Cloud on this device, and what to upload</span>
+                </button>
                 <button type="button" class="settings-nav-btn" data-settings-panel="look">
                     <strong>Look</strong>
                     <span>Background and list color</span>
@@ -254,6 +258,24 @@
                     <strong>History</strong>
                     <span>Restore recently deleted lists or groups</span>
                 </button>
+            </div>
+            <div id="settings-panel-sync" class="settings-panel" hidden>
+                <button type="button" class="settings-back-btn">← All settings</button>
+                <div class="setting-group">
+                    <label>Cloud on this device</label>
+                    <div class="choice-row" id="sync-mode-choices">
+                        <button type="button" data-sync-mode="off">Off</button>
+                        <button type="button" data-sync-mode="push">Upload only</button>
+                        <button type="button" data-sync-mode="live">Live</button>
+                    </div>
+                    <p class="setting-hint" id="sync-mode-hint">Upload only sends your changes and will not pull lists back every few seconds.</p>
+                </div>
+                <div class="setting-group" id="sync-what-group">
+                    <label>What to upload</label>
+                    <label class="check-row"><input type="checkbox" id="sync-lists"> Lists and tasks</label>
+                    <label class="check-row"><input type="checkbox" id="sync-groups"> Groups</label>
+                    <p class="setting-hint">Uncheck something to keep it on this device only. Shared lists still need Lists and tasks on.</p>
+                </div>
             </div>
             <div id="settings-panel-look" class="settings-panel" hidden>
                 <button type="button" class="settings-back-btn">← All settings</button>
@@ -375,6 +397,10 @@
                 <p class="setting-hint">Copy the invite link, or tap Invite under the list name. They sign in with their own account, then this list stays in sync for both of you.</p>
                 <button type="button" id="share-list-btn" class="settings-link">Copy invite link</button>
                 <p id="share-list-status" class="theme-upload-status" hidden></p>
+            </div>
+            <div class="setting-group" id="list-sync-group">
+                <label class="check-row"><input type="checkbox" id="list-sync-toggle"> Sync this list</label>
+                <p class="setting-hint">Uncheck to keep this list on this device only. It will not upload, and cloud will not put it back.</p>
             </div>
             <div class="setting-group">
                 <label for="list-reset-select">Reset frequency</label>

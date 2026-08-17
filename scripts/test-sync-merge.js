@@ -34,7 +34,7 @@ function ids(items) {
     return (items || []).map((item) => String(item.id)).sort().join(',');
 }
 
-function pullLists({ live, remote, tombs, idsAtStart }) {
+function pullLists({ live, remote, tombs, idsAtStart, knownIds, localOnlyIds }) {
     const deletedLists = new Set([...(tombs || [])].map(String));
     const remoteLists = (remote || []).filter((list) => !listIsDeleted(list.id, deletedLists));
     const liveIds = new Set((live || []).map((list) => String(list.id)));
@@ -44,11 +44,13 @@ function pullLists({ live, remote, tombs, idsAtStart }) {
         tombs: deletedLists,
         idsAtStart: start,
         liveIds,
-        remoteIds
+        remoteIds,
+        knownIds: new Set([...(knownIds || [])].map(String)),
+        localOnlyIds: new Set([...(localOnlyIds || [])].map(String))
     });
 }
 
-function pullGroups({ live, remote, tombs, idsAtStart }) {
+function pullGroups({ live, remote, tombs, idsAtStart, knownIds }) {
     const deletedGroups = new Set([...(tombs || [])].map(String));
     const remoteGroups = (remote || []).filter((group) => !groupIsDeleted(group.id, deletedGroups));
     const liveIds = new Set((live || []).map((group) => String(group.id)));
@@ -58,7 +60,8 @@ function pullGroups({ live, remote, tombs, idsAtStart }) {
         tombs: deletedGroups,
         idsAtStart: start,
         liveIds,
-        remoteIds
+        remoteIds,
+        knownIds: new Set([...(knownIds || [])].map(String))
     });
 }
 
@@ -200,6 +203,36 @@ const restoredGroups = pullGroups({
     tombs: sync.deletedGroupIds()
 });
 assert('restore: group can come back after forgetDeletedGroup', ids(restoredGroups) === 'group-a');
+
+assert(
+    'list: known-but-missing id never comes back even without a tombstone',
+    ids(pullLists({
+        live: [{ id: 'keep' }],
+        remote: [{ id: 'keep' }, { id: 'gone' }],
+        tombs: [],
+        knownIds: ['keep', 'gone']
+    })) === 'keep'
+);
+
+assert(
+    'group: known-but-missing id never comes back even without a tombstone',
+    ids(pullGroups({
+        live: [{ id: 'keep' }],
+        remote: [{ id: 'keep' }, { id: 'gone-group' }],
+        tombs: [],
+        knownIds: ['keep', 'gone-group']
+    })) === 'keep'
+);
+
+assert(
+    'list: local-only list is kept and not replaced',
+    ids(pullLists({
+        live: [{ id: 'private' }],
+        remote: [{ id: 'private', name: 'from-cloud' }],
+        tombs: [],
+        localOnlyIds: ['private']
+    })) === 'private'
+);
 
 if (failed) {
     console.error(`\n${failed} check(s) failed`);

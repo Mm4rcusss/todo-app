@@ -423,6 +423,9 @@ document.addEventListener('DOMContentLoaded', () => {
             delete state.settings.loginChip;
         }
         state.settings.optimizedMode = Boolean(shell?.optimizedMode);
+        state.settings.syncMode = shell?.syncMode === 'off' || shell?.syncMode === 'live' ? shell.syncMode : 'push';
+        state.settings.syncLists = shell?.syncLists !== false;
+        state.settings.syncGroups = shell?.syncGroups !== false;
         if (shell && Object.prototype.hasOwnProperty.call(shell, 'trash')) {
             state.settings.trash = Array.isArray(shell.trash) ? shell.trash.slice(0, 5) : [];
         } else {
@@ -441,6 +444,9 @@ document.addEventListener('DOMContentLoaded', () => {
             delete payload.settings.loginChip;
             delete payload.settings.optimizedMode;
             delete payload.settings.trash;
+            delete payload.settings.syncMode;
+            delete payload.settings.syncLists;
+            delete payload.settings.syncGroups;
         }
         if (document.body.classList.contains('orbit-mobile') && previous.settings) {
             payload.settings = {
@@ -453,6 +459,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 delete payload.settings.loginChip;
                 delete payload.settings.optimizedMode;
                 delete payload.settings.trash;
+                delete payload.settings.syncMode;
+                delete payload.settings.syncLists;
+                delete payload.settings.syncGroups;
             }
         }
         localStorage.setItem(STATE_KEY, JSON.stringify(payload));
@@ -464,6 +473,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 taskScale: state.settings.taskScale,
                 loginChip: state.settings.loginChip || { hidden: false },
                 optimizedMode: Boolean(state.settings.optimizedMode),
+                syncMode: state.settings.syncMode === 'off' || state.settings.syncMode === 'live' ? state.settings.syncMode : 'push',
+                syncLists: state.settings.syncLists !== false,
+                syncGroups: state.settings.syncGroups !== false,
                 trash: Array.isArray(state.settings.trash) ? state.settings.trash.slice(0, 5) : []
             }));
         } catch { /* ignore */ }
@@ -1166,6 +1178,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!leaving) pushTrash(snapshotDeletedList(list));
                 window.OrbitSync?.rememberDeleted?.(list.id);
                 if (isHomeList(list.id)) window.OrbitSync?.rememberDeleted?.('default');
+                window.OrbitSync?.noteLocalDelete?.(list.id);
                 if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
                 state.deletedListIds.push(String(list.id));
                 state.lists = state.lists.filter((item) => !sameId(item.id, list.id));
@@ -1182,6 +1195,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     if (leaving) await window.OrbitSync?.leaveList(list.id);
                     else await window.OrbitSync?.removeList(list.id);
+                    await window.OrbitSync?.pushNow?.();
                 } catch {
                     /* tombstone keeps it from coming back until cloud delete lands */
                 }
@@ -1228,6 +1242,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!confirmed) return;
             pushTrash(snapshotDeletedGroup(group));
             window.OrbitSync?.rememberDeletedGroup?.(group.id);
+            window.OrbitSync?.noteLocalDelete?.(group.id, 'group');
             if (!Array.isArray(state.deletedGroupIds)) state.deletedGroupIds = [];
             state.deletedGroupIds.push(String(group.id));
             const parent = groupParentId(group);
@@ -1241,6 +1256,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (sameId(sidebarFocusGroupId, group.id)) sidebarFocusGroupId = parent;
             saveState();
             renderSidebar();
+            try { await window.OrbitSync?.pushNow?.(); } catch { /* tombstone keeps it gone */ }
         });
         bindTreeDrag(header);
         return header;
@@ -2030,7 +2046,12 @@ document.addEventListener('DOMContentLoaded', () => {
             addGroupOptions('', 0);
         }
         const shareGroup = document.getElementById('share-list-group');
-        if (shareGroup) shareGroup.hidden = list.role === 'editor';
+        if (shareGroup) shareGroup.hidden = list.role === 'editor' || list.sync === false;
+        const listSync = document.getElementById('list-sync-toggle');
+        if (listSync) {
+            listSync.checked = list.sync !== false;
+            listSync.disabled = list.role === 'editor';
+        }
         const shareStatus = document.getElementById('share-list-status');
         if (shareStatus) {
             shareStatus.hidden = true;
@@ -2062,6 +2083,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 : type;
             const groupSelect = document.getElementById('list-group-select');
             if (groupSelect) list.groupId = groupSelect.value || '';
+            const listSync = document.getElementById('list-sync-toggle');
+            if (listSync && list.role !== 'editor') list.sync = listSync.checked;
             list.updatedAt = new Date().toISOString();
             saveState();
             renderSidebar();
@@ -2888,6 +2911,41 @@ document.addEventListener('DOMContentLoaded', () => {
         syncLayoutModal();
     }
 
+    function syncModeValue() {
+        const mode = state.settings.syncMode;
+        return mode === 'off' || mode === 'live' ? mode : 'push';
+    }
+
+    function syncModeHint(mode) {
+        if (mode === 'off') return 'This device stays local. Sign in still works. Nothing uploads or downloads.';
+        if (mode === 'live') return 'Keeps phone and computer in sync automatically. If a deleted list comes back, switch to Upload only.';
+        return 'Sends your changes. Will not pull lists back every few seconds. Tap Sync when you want to download from another device.';
+    }
+
+    function applySyncSettingsUi() {
+        const mode = syncModeValue();
+        document.querySelectorAll('#sync-mode-choices [data-sync-mode]').forEach((btn) => {
+            btn.classList.toggle('selected', btn.dataset.syncMode === mode);
+        });
+        const hint = document.getElementById('sync-mode-hint');
+        if (hint) hint.textContent = syncModeHint(mode);
+        const lists = document.getElementById('sync-lists');
+        const groups = document.getElementById('sync-groups');
+        if (lists) lists.checked = state.settings.syncLists !== false;
+        if (groups) groups.checked = state.settings.syncGroups !== false;
+        const what = document.getElementById('sync-what-group');
+        if (what) what.hidden = mode === 'off';
+    }
+
+    async function setSyncMode(mode) {
+        state.settings.syncMode = mode === 'off' || mode === 'live' ? mode : 'push';
+        applySyncSettingsUi();
+        saveState({ skipSync: true });
+        await window.OrbitSync?.applySyncMode?.();
+        if (state.settings.syncMode === 'push') window.OrbitSync?.schedulePush?.();
+        refreshAccountUi();
+    }
+
     function syncLayoutModal() {
         const side = state.settings.sidebar.side === 'right' ? 'right' : 'left';
         const mode = state.settings.sidebar.mode === 'overlay' ? 'overlay' : 'dock';
@@ -2919,6 +2977,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const optimizedBox = document.getElementById('optimized-mode');
         if (optimizedBox) optimizedBox.checked = Boolean(state.settings.optimizedMode);
+        applySyncSettingsUi();
     }
 
     function setCurrentListColor(color) {
@@ -3740,8 +3799,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (title) title.textContent = user ? 'Account' : 'Log in';
         const cloudActions = document.getElementById('cloud-actions');
         if (cloudActions) cloudActions.hidden = !user;
+        const headerSync = document.getElementById('header-sync-btn');
+        if (headerSync) headerSync.hidden = !user || syncModeValue() === 'off';
+        const accountSync = document.getElementById('account-sync-btn');
+        if (accountSync) accountSync.hidden = !user || syncModeValue() === 'off';
         const inviteBtn = document.getElementById('header-invite-btn');
-        if (inviteBtn) inviteBtn.hidden = !user || !currentList() || currentList()?.role === 'editor';
+        if (inviteBtn) inviteBtn.hidden = !user || !currentList() || currentList()?.role === 'editor' || currentList()?.sync === false;
         if (signedOut) signedOut.hidden = !configured || Boolean(user);
         if (signedIn) signedIn.hidden = !user;
         if (emailLabel) emailLabel.textContent = user?.email || '';
@@ -3787,6 +3850,9 @@ document.addEventListener('DOMContentLoaded', () => {
             delete state.settings.loginChip;
             delete state.settings.optimizedMode;
             delete state.settings.trash;
+            delete state.settings.syncMode;
+            delete state.settings.syncLists;
+            delete state.settings.syncGroups;
             if (localPets) state.settings.pets = localPets;
             if (localPetChoice) state.settings.petChoice = localPetChoice;
         }
@@ -3982,6 +4048,19 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('optimized-mode')?.addEventListener('change', (e) => {
             state.settings.optimizedMode = e.target.checked;
             applyPerformanceMode();
+            saveState({ skipSync: true });
+        });
+        document.getElementById('sync-mode-choices')?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-sync-mode]');
+            if (!btn) return;
+            setSyncMode(btn.dataset.syncMode);
+        });
+        document.getElementById('sync-lists')?.addEventListener('change', (e) => {
+            state.settings.syncLists = e.target.checked;
+            saveState({ skipSync: true });
+        });
+        document.getElementById('sync-groups')?.addEventListener('change', (e) => {
+            state.settings.syncGroups = e.target.checked;
             saveState({ skipSync: true });
         });
         document.addEventListener('visibilitychange', () => {
