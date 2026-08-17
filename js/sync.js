@@ -22,20 +22,39 @@
     }
 
     function rememberDeleted(id) {
-        const next = [...new Set([...loadTombs(), String(id)])].slice(-200);
+        const extras = [String(id)];
+        if (isHomeListId(id)) extras.push('default');
+        const next = [...new Set([...loadTombs(), ...extras])].slice(-200);
         try { localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
         const state = hooks.getState?.();
         if (state) {
             if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
-            if (!state.deletedListIds.map(String).includes(String(id))) {
-                state.deletedListIds.push(String(id));
-            }
+            extras.forEach((item) => {
+                if (!state.deletedListIds.map(String).includes(item)) state.deletedListIds.push(item);
+            });
         }
         return next;
     }
 
     function tombstoneSet(state) {
         return new Set([...loadTombs(), ...((state?.deletedListIds) || [])].map(String));
+    }
+
+    function listIsDeleted(id, tombs) {
+        const value = String(id || '');
+        const blocked = tombs instanceof Set ? tombs : new Set([...(tombs || [])].map(String));
+        if (blocked.has(value)) return true;
+        if (!isHomeListId(value)) return false;
+        return blocked.has('default') || [...blocked].some((item) => item.startsWith('home_'));
+    }
+
+    function expandTombs(state, userId) {
+        const blocked = tombstoneSet(state);
+        if (listIsDeleted('default', blocked) || (userId && listIsDeleted(homeListId(userId), blocked))) {
+            blocked.add('default');
+            if (userId) blocked.add(homeListId(userId));
+        }
+        return blocked;
     }
 
     function config() {
@@ -258,7 +277,17 @@
     function ensureHomeListId(state, userId) {
         if (!state || !userId) return false;
         const homeId = homeListId(userId);
+        const tombs = expandTombs(state, userId);
         const lists = state.lists || [];
+        if (listIsDeleted('default', tombs) || listIsDeleted(homeId, tombs)) {
+            const next = lists.filter((list) => !listIsDeleted(list.id, tombs));
+            const changed = next.length !== lists.length;
+            state.lists = next;
+            if (!next.some((list) => String(list.id) === String(state.currentListId))) {
+                state.currentListId = next[0]?.id || '';
+            }
+            return changed;
+        }
         const defaultList = lists.find((list) => String(list.id) === 'default');
         if (!defaultList) return false;
 
@@ -320,11 +349,11 @@
     }
 
     function ownedLists(state, userId) {
-        const blocked = tombstoneSet(state);
+        const blocked = expandTombs(state, userId);
         return (state.lists || []).filter((list) => (
             list.role !== 'editor'
             && (!list.ownerId || String(list.ownerId) === String(userId))
-            && !blocked.has(String(list.id))
+            && !listIsDeleted(list.id, blocked)
         ));
     }
 
@@ -346,9 +375,10 @@
     }
 
     async function saveOwnedLists(sb, state, userId) {
-        const owned = ownedLists(state, userId);
+        const saved = [];
         let remapped = false;
-        for (const list of owned) {
+        for (const list of ownedLists(state, userId)) {
+            if (listIsDeleted(list.id, expandTombs(state, userId))) continue;
             const row = toListRow(list, userId);
             if (String(list.ownerId) === String(userId)) {
                 const { data, error } = await sb.from('lists')
@@ -357,13 +387,17 @@
                     .eq('owner_id', userId)
                     .select('id');
                 if (error && !isBlockedWrite(error)) throw error;
-                if (!error && data?.length) continue;
+                if (!error && data?.length) {
+                    saved.push(list);
+                    continue;
+                }
             }
 
             let error = await insertListRow(sb, row);
             if (!error) {
                 list.ownerId = userId;
                 list.role = 'owner';
+                saved.push(list);
                 continue;
             }
             if (!isBlockedWrite(error)) throw error;
@@ -376,9 +410,23 @@
             list.ownerId = userId;
             list.role = 'owner';
             remapped = true;
+            saved.push(list);
         }
         if (remapped) hooks.persistLocal?.();
-        return owned;
+        return saved;
+    }
+
+    async function deleteTombstonedLists(sb, state, userId) {
+        const removedLists = [...expandTombs(state, userId)];
+        if (!removedLists.length) return;
+        const { error: listDeleteError } = await sb.from('lists')
+            .delete()
+            .in('id', removedLists);
+        if (listDeleteError && !isBlockedWrite(listDeleteError)) throw listDeleteError;
+        for (const id of removedLists) {
+            const { error: leaveError } = await sb.rpc('leave_shared_list', { p_list_id: id });
+            void leaveError;
+        }
     }
 
     async function pull() {
@@ -388,6 +436,7 @@
 
         const local = hooks.getState();
         if (ensureHomeListId(local, user.id) || ensureDefaultTagIds(local, user.id)) hooks.persistLocal?.();
+        const idsAtStart = new Set((local.lists || []).map((list) => String(list.id)));
 
         const [listsRes, membersRes, tasksRes, tagsRes, groupsRes, prefsRes] = await Promise.all([
             sb.from('lists').select('*'),
@@ -423,13 +472,15 @@
             updatedAt: row.updated_at
         }));
 
-        const deletedLists = tombstoneSet(live);
+        const liveIds = new Set((live.lists || []).map((list) => String(list.id)));
+        const deletedLists = expandTombs(live, user.id);
         const deleted = new Set((live.deletedTaskIds || []).map(String));
         const remoteIds = new Set(remoteLists.map((list) => String(list.id)));
 
         const lists = mergeById(live.lists || [], remoteLists).filter((list) => {
             const id = String(list.id);
-            if (deletedLists.has(id)) return false;
+            if (listIsDeleted(id, deletedLists)) return false;
+            if (idsAtStart.has(id) && !liveIds.has(id)) return false;
             if (remoteIds.has(id)) return true;
             if (list.role === 'editor') return false;
             return !list.ownerId;
@@ -439,7 +490,7 @@
         const listIds = new Set(lists.map((list) => String(list.id)));
         const tasks = mergeById(live.tasks || [], remoteTasks).filter((task) => {
             const id = String(task.id);
-            if (!listIds.has(String(task.listId)) || deleted.has(id) || deletedLists.has(String(task.listId))) return false;
+            if (!listIds.has(String(task.listId)) || deleted.has(id) || listIsDeleted(task.listId, deletedLists)) return false;
             if (remoteTaskIds.has(id)) return true;
             return !previousSync || stamp(task.updatedAt) >= stamp(previousSync);
         });
@@ -449,7 +500,6 @@
         const prefs = prefsRes.data;
         let settings = live.settings;
         let bitsParams = live.bitsParams;
-        let currentListId = live.currentListId;
         if (prefs && stamp(prefs.updated_at) >= stamp(live.settings?.updatedAt)) {
             const localPets = live.settings?.pets;
             const localPetChoice = live.settings?.petChoice;
@@ -457,19 +507,23 @@
             if (localPets) settings.pets = localPets;
             if (localPetChoice) settings.petChoice = localPetChoice;
             bitsParams = prefs.bits_params && typeof prefs.bits_params === 'object' ? prefs.bits_params : bitsParams;
-            if (prefs.current_list_id && !deletedLists.has(String(prefs.current_list_id))) {
-                currentListId = prefs.current_list_id;
-            }
         }
 
+        let currentListId = live.currentListId;
         const cloudState = { lists, tasks, currentListId };
         ensureHomeListId(cloudState, user.id);
-        cloudState.lists = (cloudState.lists || []).filter((list) => !deletedLists.has(String(list.id)));
+        cloudState.lists = (cloudState.lists || []).filter((list) => !listIsDeleted(list.id, deletedLists));
+        const keptListIds = new Set((cloudState.lists || []).map((list) => String(list.id)));
         cloudState.tasks = (cloudState.tasks || []).filter((task) => (
-            !deletedLists.has(String(task.listId)) && listIds.has(String(task.listId))
+            !listIsDeleted(task.listId, deletedLists) && keptListIds.has(String(task.listId))
         ));
-        if (deletedLists.has(String(cloudState.currentListId))) {
-            cloudState.currentListId = cloudState.lists[0]?.id || live.currentListId;
+        const liveCurrent = String(live.currentListId || '');
+        if (keptListIds.has(liveCurrent)) {
+            cloudState.currentListId = live.currentListId;
+        } else if (prefs?.current_list_id && keptListIds.has(String(prefs.current_list_id))) {
+            cloudState.currentListId = prefs.current_list_id;
+        } else {
+            cloudState.currentListId = cloudState.lists[0]?.id || '';
         }
 
         lastSyncAt = nowIso();
@@ -492,8 +546,10 @@
         const state = hooks.getState();
         if (ensureHomeListId(state, user.id) || ensureDefaultTagIds(state, user.id)) hooks.persistLocal?.();
 
+        await deleteTombstonedLists(sb, state, user.id);
         const owned = await saveOwnedLists(sb, state, user.id);
-        const editable = state.lists || [];
+        const blocked = expandTombs(state, user.id);
+        const editable = (state.lists || []).filter((list) => !listIsDeleted(list.id, blocked));
         const editableIds = editable.map((list) => String(list.id));
 
         const deletedIds = (state.deletedTaskIds || []).map(String).filter(Boolean);
@@ -559,17 +615,7 @@
             if (error) throw error;
         }
 
-        const removedLists = [...tombstoneSet(state)];
-        if (removedLists.length) {
-            const { error: listDeleteError } = await sb.from('lists')
-                .delete()
-                .in('id', removedLists);
-            if (listDeleteError && !isBlockedWrite(listDeleteError)) throw listDeleteError;
-            for (const id of removedLists) {
-                const { error: leaveError } = await sb.rpc('leave_shared_list', { p_list_id: id });
-                void leaveError;
-            }
-        }
+        await deleteTombstonedLists(sb, state, user.id);
 
         const { data: remoteGroups } = await sb.from('groups').select('id').eq('user_id', user.id);
         const localGroupIds = new Set((state.groups || []).map((group) => String(group.id)));
@@ -701,7 +747,12 @@
     function schedulePull() {
         if (!isConfigured() || !ready) return;
         sessionUser().then((user) => {
-            if (user) run('pull');
+            if (!user) return;
+            if (pushTimer) {
+                pendingKind = mergeKinds(pendingKind, 'pull');
+                return;
+            }
+            run('pull');
         }).catch(() => {});
     }
 
@@ -735,6 +786,7 @@
         if (!isConfigured() || !ready) return;
         clearTimeout(pushTimer);
         pushTimer = global.setTimeout(() => {
+            pushTimer = 0;
             sessionUser().then((user) => {
                 if (user) run('push');
             }).catch(() => {});
@@ -748,6 +800,7 @@
         lastError() { return lastError; },
         pendingInvite() { return Boolean(inviteFromLocation()); },
         rememberDeleted,
+        listIsDeleted,
         deletedListIds() { return loadTombs(); },
         async user() {
             return sessionUser();
@@ -788,6 +841,26 @@
                 options: { emailRedirectTo: redirectTo() }
             });
             if (error) throw error;
+        },
+        async signInWithPassword(email, password) {
+            const sb = await getClient();
+            if (!sb) throw new Error('Cloud sync is not configured.');
+            const { error } = await sb.auth.signInWithPassword({
+                email: String(email || '').trim(),
+                password: String(password || '')
+            });
+            if (error) throw error;
+        },
+        async signUpWithPassword(email, password) {
+            const sb = await getClient();
+            if (!sb) throw new Error('Cloud sync is not configured.');
+            const { data, error } = await sb.auth.signUp({
+                email: String(email || '').trim(),
+                password: String(password || ''),
+                options: { emailRedirectTo: redirectTo() }
+            });
+            if (error) throw error;
+            return data;
         },
         async signOut() {
             const sb = await getClient();

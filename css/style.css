@@ -332,14 +332,14 @@ header {
     z-index: 30;
 }
 
-#prefs-btn {
+#account-btn {
     position: absolute;
     top: 1.7rem;
     right: 1.15rem;
     z-index: 30;
 }
 
-.app-wrapper.sidebar-right #prefs-btn {
+.app-wrapper.sidebar-right #account-btn {
     right: auto;
     left: 1.15rem;
 }
@@ -884,33 +884,157 @@ header {
     height: 44px;
 }
 
-#prefs-btn {
-    font-size: 1.5rem;
+#account-btn {
+    font-size: 0.82rem;
+    font-weight: 700;
+    font-family: inherit;
     background: rgba(12, 12, 12, 0.78);
     border: 1px solid rgba(255, 255, 255, 0.5);
     border-radius: 12px;
     color: #fff;
     cursor: pointer;
-    padding: 8px;
-    width: 44px;
+    padding: 0 0.85rem;
+    min-width: 44px;
     height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
 }
 
-#prefs-btn:hover,
-#prefs-btn:focus-visible {
+#account-btn:hover,
+#account-btn:focus-visible {
     background: rgba(255, 255, 255, 0.16);
     border-color: #fff;
     color: #fff;
 }
 
-#prefs-btn svg {
+#account-btn.is-signed-in {
+    border-color: rgba(94, 224, 160, 0.7);
+}
+
+.account-btn-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #5ee0a0;
+    box-shadow: 0 0 8px rgba(94, 224, 160, 0.7);
+}
+
+.account-btn-dot[hidden] {
+    display: none;
+}
+
+.account-signed-badge {
+    margin: 0 0 0.35rem;
+    font-weight: 700;
+    color: #5ee0a0;
+}
+
+#account-login-btn {
+    width: 100%;
+    margin: 0.65rem 0 0.4rem;
+}
+
+.sidebar-hint {
+    margin: 0.15rem 0 0.55rem;
+    color: var(--color-text-secondary);
+    font-size: 0.75rem;
+    line-height: 1.35;
+}
+
+.sidebar-settings-btn {
     display: block;
-    width: 20px;
-    height: 20px;
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+    width: 100%;
+    margin: 0.15rem 0 0.4rem;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+}
+
+.sidebar-settings-btn:hover,
+.sidebar-settings-btn:focus-visible {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.settings-home {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-bottom: 1rem;
+}
+
+.settings-nav-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+    width: 100%;
+    padding: 0.9rem 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.settings-nav-btn strong {
+    font-size: 1rem;
+}
+
+.settings-nav-btn span {
+    color: var(--color-text-secondary);
+    font-size: 0.82rem;
+}
+
+.settings-nav-btn:hover,
+.settings-nav-btn:focus-visible {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.settings-back-btn {
+    display: inline-flex;
+    margin: 0 0 1rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.settings-panel[hidden],
+#settings-home[hidden] {
+    display: none;
+}
+
+.list-item.dragging-list {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.list-group-header.drop-ready,
+.lists-nav.drop-ready {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+}
+
+.list-edit-btn {
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.15rem 0.4rem;
 }
 
 .menu-btn {
@@ -960,21 +1084,21 @@ header {
     }
 
     #menu-btn,
-    #prefs-btn {
+    #account-btn {
         top: calc(env(safe-area-inset-top) + 0.55rem);
-        width: 44px;
         height: 44px;
     }
 
     #menu-btn {
         left: 0.85rem;
+        width: 44px;
     }
 
-    #prefs-btn {
+    #account-btn {
         right: 0.85rem;
     }
 
-    .app-wrapper.sidebar-right #prefs-btn {
+    .app-wrapper.sidebar-right #account-btn {
         left: 0.85rem;
         right: auto;
     }
@@ -1215,6 +1339,19 @@ header {
     -webkit-text-fill-color: transparent;
 }
 
+.header-title-input.no-list-title {
+    pointer-events: none;
+    cursor: default;
+    min-width: 0;
+    border-bottom-color: transparent;
+}
+
+#todo-input:disabled,
+#add-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 .todo-input-edit {
     background: transparent;
     border: none;
@@ -1238,6 +1375,16 @@ header {
     gap: 10px;
 }
 
+.list-drag-handle {
+    cursor: grab;
+    color: var(--color-text-secondary);
+    font-size: 0.72rem;
+    letter-spacing: -0.12em;
+    padding: 0.2rem 0.1rem;
+    touch-action: none;
+    user-select: none;
+}
+
 .list-dot {
     width: 10px;
     height: 10px;
@@ -1248,7 +1395,7 @@ header {
 .list-actions {
     display: flex;
     gap: 5px;
-    opacity: 0;
+    opacity: 1;
     transition: opacity 0.2s;
 }
 

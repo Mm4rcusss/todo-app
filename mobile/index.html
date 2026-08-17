@@ -38,10 +38,9 @@
                 <path d="M18 6L6 18M6 6L18 18" />
             </svg>
         </button>
-        <button type="button" id="prefs-btn" class="btn-icon prefs-btn" aria-label="Open settings" aria-haspopup="dialog">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.07 7.07 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.6.24-1.15.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64L4.86 10.7c-.04.31-.06.63-.06.94s.02.63.06.94L2.83 14.16a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.48.39 1.03.7 1.63.94l.36 2.54c.05.24.26.42.49.42h3.8c.24 0 .44-.18.49-.42l.36-2.54c.6-.24 1.15-.55 1.63-.94l2.39.96c.24.1.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/>
-            </svg>
+        <button type="button" id="account-btn" class="account-btn" aria-label="Log in" aria-haspopup="dialog">
+            <span class="account-btn-dot" hidden></span>
+            <span class="account-btn-label">Log in</span>
         </button>
 
         <aside class="sidebar" id="sidebar" aria-label="Lists and calendar">
@@ -56,6 +55,8 @@
             <ul class="lists-nav" id="lists-nav"></ul>
             <button type="button" id="add-list-btn" class="btn-text">+ New List</button>
             <button type="button" id="add-group-btn" class="btn-text">+ New group</button>
+            <p class="sidebar-hint">Drag a list onto a group to file it.</p>
+            <button type="button" id="prefs-btn" class="sidebar-settings-btn">Settings</button>
             <div class="sidebar-footer">
                 <div class="calendar-mini" id="calendar-mini"></div>
             </div>
@@ -160,94 +161,149 @@
         </div>
     </div>
 
+    <div id="account-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
+        <div class="modal-content">
+            <h3 id="account-modal-title">Account</h3>
+            <p class="setting-hint" id="account-hint">Sign in to sync across devices and share a list.</p>
+            <div id="account-signed-out">
+                <div class="setting-group">
+                    <label for="account-email">Email</label>
+                    <input type="email" id="account-email" class="modal-input" placeholder="you@email.com" autocomplete="email">
+                    <label for="account-password">Password</label>
+                    <input type="password" id="account-password" class="modal-input" placeholder="Password" autocomplete="current-password">
+                    <button type="button" id="account-login-btn" class="btn-primary">Log in</button>
+                    <button type="button" id="account-signup-btn" class="settings-link">Create account</button>
+                </div>
+                <div class="setting-group">
+                    <p class="setting-hint">Or email a one-time link instead.</p>
+                    <button type="button" id="account-signin-btn" class="settings-link">Send sign-in link</button>
+                </div>
+            </div>
+            <div id="account-signed-in" hidden>
+                <p class="account-signed-badge">Signed in</p>
+                <p id="account-email-label" class="setting-hint"></p>
+                <button type="button" id="account-sync-btn" class="settings-link">Sync now</button>
+                <button type="button" id="account-signout-btn" class="settings-link">Sign out</button>
+            </div>
+            <p id="account-status" class="theme-upload-status" hidden></p>
+            <button type="button" id="close-account-modal" class="btn-primary">Done</button>
+        </div>
+    </div>
+
     <div id="prefs-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="prefs-modal-title">
         <div class="modal-content">
             <h3 id="prefs-modal-title">Settings</h3>
-            <div class="setting-group" id="account-group">
-                <label>Account</label>
-                <p class="setting-hint" id="account-hint">Optional. Sign in to sync lists across devices and share a list with someone.</p>
-                <div id="account-signed-out">
-                    <input type="email" id="account-email" class="modal-input" placeholder="you@email.com" autocomplete="email">
-                    <button type="button" id="account-signin-btn" class="settings-link">Send sign-in link</button>
+            <div id="settings-home" class="settings-home">
+                <p class="setting-hint">Pick what you want to change.</p>
+                <button type="button" class="settings-nav-btn" data-settings-panel="look">
+                    <strong>Look</strong>
+                    <span>Background and list color</span>
+                </button>
+                <button type="button" class="settings-nav-btn" data-settings-panel="widgets">
+                    <strong>Widgets</strong>
+                    <span>Clock, date, and GIF pets</span>
+                </button>
+                <button type="button" class="settings-nav-btn" data-settings-panel="layout">
+                    <strong>Layout</strong>
+                    <span>Menu side and task size</span>
+                </button>
+                <button type="button" class="settings-nav-btn" data-settings-panel="templates">
+                    <strong>Templates</strong>
+                    <span>Add a ready-made list</span>
+                </button>
+                <button type="button" class="settings-nav-btn" data-settings-panel="backup">
+                    <strong>Backup</strong>
+                    <span>Export or import your lists</span>
+                </button>
+            </div>
+            <div id="settings-panel-look" class="settings-panel" hidden>
+                <button type="button" class="settings-back-btn">← All settings</button>
+                <div class="setting-group">
+                    <button type="button" id="open-theme-btn" class="settings-link">Customize background</button>
                 </div>
-                <div id="account-signed-in" hidden>
-                    <p id="account-email-label" class="setting-hint"></p>
-                    <button type="button" id="account-sync-btn" class="settings-link">Sync now</button>
-                    <button type="button" id="account-signout-btn" class="settings-link">Sign out</button>
-                </div>
-                <p id="account-status" class="theme-upload-status" hidden></p>
-            </div>
-            <div class="setting-group">
-                <button type="button" id="open-theme-btn" class="settings-link">Customize background</button>
-                <a class="settings-link" href="../">Switch to website</a>
-            </div>
-            <div class="setting-group" id="task-scale-group">
-                <label for="task-scale-slider">Task size <span id="task-scale-value">100%</span></label>
-                <input type="range" id="task-scale-slider" min="55" max="220" step="5" value="100" aria-label="Task size">
-                <div class="scale-row">
-                    <button type="button" id="task-scale-down" aria-label="Smaller tasks">−</button>
-                    <button type="button" id="task-scale-up" aria-label="Larger tasks">+</button>
-                </div>
-                <button type="button" id="task-scale-reset" class="btn-text">Reset size</button>
-                <p class="setting-hint">Drag the slider or pinch the list. Size goes from 55% to 220%.</p>
-            </div>
-            <div class="setting-group">
-                <label for="prefs-list-color">List color</label>
-                <p class="setting-hint" id="prefs-list-color-name"></p>
-                <input type="color" id="prefs-list-color">
-            </div>
-            <div class="setting-group">
-                <label>Lists menu</label>
-                <div class="choice-row" id="sidebar-side-choices">
-                    <button type="button" data-side="left">Left</button>
-                    <button type="button" data-side="right">Right</button>
+                <div class="setting-group">
+                    <label for="prefs-list-color">List color</label>
+                    <p class="setting-hint" id="prefs-list-color-name"></p>
+                    <input type="color" id="prefs-list-color">
                 </div>
             </div>
-            <div class="setting-group">
-                <label>Widgets</label>
-                <label class="check-row"><input type="checkbox" id="widget-clock"> Clock</label>
-                <label class="check-row"><input type="checkbox" id="widget-date"> Date</label>
-                <label class="check-row"><input type="checkbox" id="widget-pet"> GIF pet</label>
-                <div class="bits-field widget-scale-field" data-widget-scale="pet" hidden>
-                    <label for="widget-pet-scale">Pet size <span id="widget-pet-scale-value">100%</span></label>
-                    <input type="range" id="widget-pet-scale" min="70" max="220" step="5" value="100">
+            <div id="settings-panel-widgets" class="settings-panel" hidden>
+                <button type="button" class="settings-back-btn">← All settings</button>
+                <div class="setting-group">
+                    <label>Widgets</label>
+                    <label class="check-row"><input type="checkbox" id="widget-clock"> Clock</label>
+                    <label class="check-row"><input type="checkbox" id="widget-date"> Date</label>
+                    <label class="check-row"><input type="checkbox" id="widget-pet"> GIF pet</label>
+                    <div class="bits-field widget-scale-field" data-widget-scale="pet" hidden>
+                        <label for="widget-pet-scale">Pet size <span id="widget-pet-scale-value">100%</span></label>
+                        <input type="range" id="widget-pet-scale" min="70" max="220" step="5" value="100">
+                    </div>
+                    <p class="setting-hint">Clock and date sit under the list name. Tap a type to add more pets, then tap or drag them around the screen.</p>
                 </div>
-                <p class="setting-hint">Clock and date sit under the list name. Tap a type to add more pets, then tap or drag them around the screen.</p>
+                <div class="setting-group" id="pet-upload-group" hidden>
+                    <label>Add pets</label>
+                    <p class="setting-hint">Tap a type to add another. Mix as many as you like.</p>
+                    <div class="pet-choice-grid" id="pet-choice-grid"></div>
+                    <div class="pet-roster" id="pet-roster" hidden></div>
+                    <label class="theme-upload">
+                        <input type="file" id="pet-input" accept="image/gif,image/webp,image/png,image/jpeg" hidden>
+                        <span>Upload your own GIF</span>
+                    </label>
+                    <button type="button" id="pet-remove-btn" class="btn-text">Remove uploaded GIF</button>
+                    <button type="button" id="pet-clear-btn" class="btn-text" hidden>Clear all pets</button>
+                    <p id="pet-status" class="theme-upload-status" hidden></p>
+                </div>
             </div>
-            <div class="setting-group" id="pet-upload-group" hidden>
-                <label>Add pets</label>
-                <p class="setting-hint">Tap a type to add another. Mix as many as you like.</p>
-                <div class="pet-choice-grid" id="pet-choice-grid"></div>
-                <div class="pet-roster" id="pet-roster" hidden></div>
-                <label class="theme-upload">
-                    <input type="file" id="pet-input" accept="image/gif,image/webp,image/png,image/jpeg" hidden>
-                    <span>Upload your own GIF</span>
-                </label>
-                <button type="button" id="pet-remove-btn" class="btn-text">Remove uploaded GIF</button>
-                <button type="button" id="pet-clear-btn" class="btn-text" hidden>Clear all pets</button>
-                <p id="pet-status" class="theme-upload-status" hidden></p>
+            <div id="settings-panel-layout" class="settings-panel" hidden>
+                <button type="button" class="settings-back-btn">← All settings</button>
+                <div class="setting-group">
+                    <a class="settings-link" href="../">Switch to website</a>
+                </div>
+                <div class="setting-group" id="task-scale-group">
+                    <label for="task-scale-slider">Task size <span id="task-scale-value">100%</span></label>
+                    <input type="range" id="task-scale-slider" min="55" max="220" step="5" value="100" aria-label="Task size">
+                    <div class="scale-row">
+                        <button type="button" id="task-scale-down" aria-label="Smaller tasks">−</button>
+                        <button type="button" id="task-scale-up" aria-label="Larger tasks">+</button>
+                    </div>
+                    <button type="button" id="task-scale-reset" class="btn-text">Reset size</button>
+                    <p class="setting-hint">Drag the slider or pinch the list. Size goes from 55% to 220%.</p>
+                </div>
+                <div class="setting-group">
+                    <label>Lists menu</label>
+                    <div class="choice-row" id="sidebar-side-choices">
+                        <button type="button" data-side="left">Left</button>
+                        <button type="button" data-side="right">Right</button>
+                    </div>
+                </div>
             </div>
-            <div class="setting-group" id="template-group" data-template-base="../templates">
-                <label>Try a template</label>
-                <p class="setting-hint">Adds a ready-made list. Your tasks stay put.</p>
-                <button type="button" class="settings-link" data-template="morning-routine">Morning routine</button>
-                <button type="button" class="settings-link" data-template="work-sprint">Work sprint</button>
-                <button type="button" class="settings-link" data-template="weekend-reset">Weekend reset</button>
-                <button type="button" class="settings-link" data-template="travel-kit">Travel kit</button>
-                <button type="button" class="settings-link" data-template="study-plan">Study plan</button>
+            <div id="settings-panel-templates" class="settings-panel" hidden>
+                <button type="button" class="settings-back-btn">← All settings</button>
+                <div class="setting-group" id="template-group" data-template-base="../templates">
+                    <label>Try a template</label>
+                    <p class="setting-hint">Adds a ready-made list. Your tasks stay put.</p>
+                    <button type="button" class="settings-link" data-template="morning-routine">Morning routine</button>
+                    <button type="button" class="settings-link" data-template="work-sprint">Work sprint</button>
+                    <button type="button" class="settings-link" data-template="weekend-reset">Weekend reset</button>
+                    <button type="button" class="settings-link" data-template="travel-kit">Travel kit</button>
+                    <button type="button" class="settings-link" data-template="study-plan">Study plan</button>
+                </div>
             </div>
-            <div class="setting-group" id="backup-group">
-                <label>Backup</label>
-                <p class="setting-hint">Save a JSON file you can restore later. Import lets you pick which lists to use.</p>
-                <label class="check-row"><input type="checkbox" id="backup-include-media"> Include photos and pet</label>
-                <button type="button" id="backup-export-btn" class="settings-link">Export backup</button>
-                <button type="button" id="backup-share-btn" class="settings-link" hidden>Share backup</button>
-                <label class="settings-link backup-import-label">
-                    Import backup
-                    <input type="file" id="backup-import-input" accept=".json,application/json,text/plain,*/*" hidden>
-                </label>
-                <button type="button" id="backup-restore-btn" class="settings-link" hidden>Restore my lists</button>
-                <p id="backup-restore-hint" class="setting-hint" hidden>Go back to what you had before a template or import.</p>
+            <div id="settings-panel-backup" class="settings-panel" hidden>
+                <button type="button" class="settings-back-btn">← All settings</button>
+                <div class="setting-group" id="backup-group">
+                    <label>Backup</label>
+                    <p class="setting-hint">Save a JSON file you can restore later. Import lets you pick which lists to use.</p>
+                    <label class="check-row"><input type="checkbox" id="backup-include-media"> Include photos and pet</label>
+                    <button type="button" id="backup-export-btn" class="settings-link">Export backup</button>
+                    <button type="button" id="backup-share-btn" class="settings-link" hidden>Share backup</button>
+                    <label class="settings-link backup-import-label">
+                        Import backup
+                        <input type="file" id="backup-import-input" accept=".json,application/json,text/plain,*/*" hidden>
+                    </label>
+                    <button type="button" id="backup-restore-btn" class="settings-link" hidden>Restore my lists</button>
+                    <p id="backup-restore-hint" class="setting-hint" hidden>Go back to what you had before a template or import.</p>
+                </div>
             </div>
             <button type="button" id="close-prefs-modal" class="btn-primary">Done</button>
         </div>
@@ -255,7 +311,8 @@
 
     <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
         <div class="modal-content">
-            <h3 id="settings-modal-title">List settings</h3>
+            <h3 id="settings-modal-title">Edit list</h3>
+            <p class="setting-hint">This list only. You can also drag it onto a group in the menu.</p>
             <div class="setting-group">
                 <label for="list-group-select">Group</label>
                 <select id="list-group-select">

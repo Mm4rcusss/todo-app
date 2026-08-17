@@ -331,7 +331,7 @@
         tasks.forEach((task) => (task.tags || []).forEach((id) => tagIds.add(String(id))));
         const tags = (imported.data.tags || []).filter((tag) => tagIds.has(String(tag.id)));
         let currentListId = imported.data.currentListId;
-        if (!listIds.has(String(currentListId))) currentListId = lists[0].id;
+        if (!listIds.has(String(currentListId))) currentListId = lists[0]?.id || '';
         const themeIds = new Set(
             lists.map((list) => list.theme).filter((id) => String(id || '').startsWith('custom_'))
         );

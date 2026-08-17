@@ -345,7 +345,7 @@ document.addEventListener('DOMContentLoaded', () => {
         window.BitsFX?.initUI({ addBtn: null });
         bindCloud();
         setSidebarOpen(false);
-        if (!window.matchMedia('(pointer: coarse)').matches) todoInput.focus();
+        if (currentList() && !window.matchMedia('(pointer: coarse)').matches) todoInput.focus();
     }
 
     function loadState() {
@@ -355,16 +355,19 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const saved = JSON.parse(raw);
             state = { ...state, ...saved };
-            if (!Array.isArray(state.lists) || state.lists.length === 0) {
-                state.lists = [
-                    { id: 'default', name: 'My Tasks', icon: '📝', theme: 'rb-particles', color: '#b19eef', resetFrequency: 'none' }
-                ];
-            }
+            if (!Array.isArray(state.lists)) state.lists = [];
             if (!Array.isArray(state.tasks)) state.tasks = [];
             if (!Array.isArray(state.tags)) state.tags = [];
             if (!Array.isArray(state.groups)) state.groups = [];
             if (!Array.isArray(state.deletedTaskIds)) state.deletedTaskIds = [];
             if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
+            const goneLists = new Set([
+                ...state.deletedListIds,
+                ...(window.OrbitSync?.deletedListIds?.() || [])
+            ].map(String));
+            state.lists = state.lists.filter((list) => !(
+                window.OrbitSync?.listIsDeleted?.(list.id, goneLists) || goneLists.has(String(list.id))
+            ));
             if (!state.settings) state.settings = {};
             if (!state.settings.sortBy) state.settings.sortBy = 'custom';
             if (!state.settings.sidebar) state.settings.sidebar = { side: 'left', mode: 'dock' };
@@ -413,7 +416,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!theme.name) theme.name = 'Wallpaper';
             });
             if (!state.lists.some((list) => sameId(list.id, state.currentListId))) {
-                state.currentListId = state.lists[0].id;
+                state.currentListId = state.lists[0]?.id || '';
             }
 
             state.currentDate = todayLocal();
@@ -445,6 +448,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const fingerprints = new Map();
+    let listDrag = null;
+    let skipListClick = false;
 
     function itemFingerprint(item) {
         if (!item || typeof item !== 'object') return '';
@@ -544,10 +549,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderHeader() {
         const list = currentList();
-        const titleText = list ? list.name : 'My Tasks';
-
         listTitle.replaceChildren();
 
+        const inviteBtn = document.getElementById('header-invite-btn');
+        if (!list) {
+            const title = document.createElement('span');
+            title.className = 'header-title-input gradient-text no-list-title';
+            title.textContent = 'Currently no list';
+            listTitle.append(title);
+            currentDateEl.textContent = 'Use + New List in the menu';
+            if (inviteBtn) inviteBtn.hidden = true;
+            return;
+        }
+
+        const titleText = list.name;
         const titleInput = document.createElement('input');
         titleInput.type = 'text';
         titleInput.className = 'header-title-input gradient-text';
@@ -561,7 +576,7 @@ document.addEventListener('DOMContentLoaded', () => {
             titleInput.size = Math.max(titleInput.value.length, 4);
         });
         titleInput.addEventListener('blur', () => {
-            if (list && titleInput.value.trim()) {
+            if (titleInput.value.trim()) {
                 list.name = titleInput.value.trim();
                 saveState();
                 renderSidebar();
@@ -585,29 +600,32 @@ document.addEventListener('DOMContentLoaded', () => {
         listTitle.append(titleInput, sortBtn);
 
         currentDateEl.textContent = resetLabel(list) || parseLocalDate(state.currentDate).toLocaleDateString('en-US', DATE_FORMAT);
-        const inviteBtn = document.getElementById('header-invite-btn');
-        if (inviteBtn) inviteBtn.hidden = document.getElementById('cloud-actions')?.hidden || list?.role === 'editor';
+        if (inviteBtn) inviteBtn.hidden = document.getElementById('cloud-actions')?.hidden || list.role === 'editor';
     }
 
     function renderListRow(list, inGroup) {
         const li = document.createElement('li');
         li.className = `list-item${sameId(list.id, state.currentListId) ? ' active' : ''}${inGroup ? ' in-group' : ''}`;
+        li.dataset.listId = String(list.id);
         const sharedMark = list.role === 'editor' ? ' <span class="list-shared">shared</span>' : '';
         li.innerHTML = `
             <div class="list-info">
+                <span class="list-drag-handle" aria-hidden="true">⋮⋮</span>
                 <span class="list-dot" style="background-color: ${escapeHtml(list.color || DEFAULT_ACCENT)};"></span>
                 <span class="list-name">${escapeHtml(list.name)}${sharedMark}</span>
             </div>
             <div class="list-actions">
-                <button type="button" class="btn-icon-small settings-list-btn" title="Settings" aria-label="List settings">
-                    <svg class="icon-btn-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 0 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1Z"/></svg>
-                </button>
-                ${!isHomeList(list.id) ? `<button type="button" class="btn-icon-small delete-list-btn" title="${list.role === 'editor' ? 'Leave list' : 'Delete'}" aria-label="${list.role === 'editor' ? 'Leave list' : 'Delete list'}">×</button>` : ''}
+                <button type="button" class="btn-icon-small list-edit-btn settings-list-btn" title="Edit list" aria-label="Edit list">Edit</button>
+                <button type="button" class="btn-icon-small delete-list-btn" title="${list.role === 'editor' ? 'Leave list' : 'Delete'}" aria-label="${list.role === 'editor' ? 'Leave list' : 'Delete list'}">×</button>
             </div>
         `;
 
         li.addEventListener('click', (e) => {
             if (e.target.closest('.btn-icon-small')) return;
+            if (skipListClick) {
+                skipListClick = false;
+                return;
+            }
             state.currentListId = list.id;
             applyTheme(list.theme || DEFAULT_THEME);
             saveState();
@@ -634,12 +652,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 );
                 if (!confirmed) return;
                 window.OrbitSync?.rememberDeleted?.(list.id);
+                if (isHomeList(list.id)) window.OrbitSync?.rememberDeleted?.('default');
                 if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
                 state.deletedListIds.push(String(list.id));
                 state.lists = state.lists.filter((item) => !sameId(item.id, list.id));
                 if (!leaving) state.tasks = state.tasks.filter((task) => !sameId(task.listId, list.id));
                 if (sameId(state.currentListId, list.id)) {
-                    state.currentListId = state.lists[0]?.id || 'default';
+                    state.currentListId = state.lists[0]?.id || '';
                     applyTheme(currentList()?.theme || DEFAULT_THEME);
                 }
                 saveState();
@@ -655,6 +674,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         }
+        bindSidebarListDrag(li, list);
         return li;
     }
 
@@ -668,6 +688,7 @@ document.addEventListener('DOMContentLoaded', () => {
         groups.forEach((group) => {
             const header = document.createElement('li');
             header.className = 'list-group-header';
+            header.dataset.groupId = String(group.id);
             header.innerHTML = `
                 <span>${escapeHtml(group.name)}</span>
                 <button type="button" class="btn-icon-small delete-group-btn" title="Remove group" aria-label="Remove group">×</button>
@@ -792,6 +813,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderTodos() {
+        const noList = !currentList();
+        const emptyCopy = emptyState.querySelector('p');
+        const emptyHint = emptyState.querySelector('span');
+        todoInput.disabled = noList;
+        addBtn.disabled = noList;
+        todoInput.placeholder = noList ? 'Create a list first' : 'Add a task';
+
+        if (noList) {
+            todoList.replaceChildren();
+            todoList.hidden = true;
+            emptyState.hidden = false;
+            if (emptyCopy) emptyCopy.textContent = 'Currently no list';
+            if (emptyHint) emptyHint.textContent = 'Tap + New List in the menu, or pick a template in Settings.';
+            updateCount([]);
+            return;
+        }
+
+        if (emptyCopy) emptyCopy.textContent = 'Nothing here yet';
+        if (emptyHint) emptyHint.textContent = 'Tap below to add a task, or try a template in Settings';
+
         const tasks = sortedTasks(visibleTasks());
         const fragment = document.createDocumentFragment();
         tasks.forEach((todo) => fragment.appendChild(createTodoElement(todo)));
@@ -903,6 +944,10 @@ document.addEventListener('DOMContentLoaded', () => {
     function addTodo() {
         const text = todoInput.value.trim();
         if (!text) return;
+        if (!currentList()) {
+            showNotice('Create a list first.');
+            return;
+        }
 
         state.tasks.push({
             id: uid('task_'),
@@ -972,6 +1017,49 @@ document.addEventListener('DOMContentLoaded', () => {
             sort: state.groups.length,
             updatedAt: new Date().toISOString()
         });
+        saveState();
+        renderSidebar();
+    }
+
+    function bindSidebarListDrag(li, list) {
+        li.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            if (!e.target.closest('.list-drag-handle')) return;
+            e.preventDefault();
+            listDrag = {
+                list,
+                li,
+                x: e.clientX,
+                y: e.clientY,
+                moved: false
+            };
+        });
+    }
+
+    function finishSidebarListDrag(e) {
+        if (!listDrag) return;
+        const drag = listDrag;
+        listDrag = null;
+        drag.li.classList.remove('dragging-list');
+        document.querySelectorAll('.drop-ready').forEach((el) => el.classList.remove('drop-ready'));
+        if (!drag.moved) return;
+        skipListClick = true;
+        const over = document.elementFromPoint(e.clientX, e.clientY);
+        const header = over?.closest('.list-group-header');
+        const other = over?.closest('.list-item');
+        let groupId = drag.list.groupId || '';
+        if (header?.dataset.groupId) groupId = header.dataset.groupId;
+        else if (other?.dataset.listId && other.dataset.listId !== String(drag.list.id)) {
+            const target = state.lists.find((item) => sameId(item.id, other.dataset.listId));
+            groupId = target?.groupId || '';
+        } else if (over?.closest('.lists-nav')) {
+            groupId = '';
+        } else {
+            return;
+        }
+        if (String(drag.list.groupId || '') === String(groupId || '')) return;
+        drag.list.groupId = groupId;
+        drag.list.updatedAt = new Date().toISOString();
         saveState();
         renderSidebar();
     }
@@ -1933,6 +2021,22 @@ document.addEventListener('DOMContentLoaded', () => {
         prefsBtn.setAttribute('aria-label', editMode ? 'Open settings (edit mode on)' : 'Open settings');
     }
 
+    function showSettingsHome() {
+        const home = document.getElementById('settings-home');
+        if (home) home.hidden = false;
+        document.querySelectorAll('.settings-panel').forEach((panel) => {
+            panel.hidden = true;
+        });
+    }
+
+    function openSettingsPanel(id) {
+        const home = document.getElementById('settings-home');
+        if (home) home.hidden = true;
+        document.querySelectorAll('.settings-panel').forEach((panel) => {
+            panel.hidden = panel.id !== `settings-panel-${id}`;
+        });
+    }
+
     function bindWindowResize() {
         let drag = null;
 
@@ -2795,14 +2899,34 @@ document.addEventListener('DOMContentLoaded', () => {
         const configured = Boolean(window.OrbitSync?.isConfigured());
         if (hint) {
             hint.textContent = configured
-                ? 'Sign in to sync. Invite is under the list name, or open a list’s ⚙️ and copy the invite link.'
+                ? 'Use email and a password. A one-time email link is also available.'
                 : 'Cloud sync is not configured. Add your Supabase URL and anon key in js/supabase-config.js.';
         }
         const user = configured ? await window.OrbitSync.user() : null;
+        const accountBtn = document.getElementById('account-btn');
+        const accountLabel = accountBtn?.querySelector('.account-btn-label');
+        const accountDot = accountBtn?.querySelector('.account-btn-dot');
+        if (accountBtn) {
+            accountBtn.classList.toggle('is-signed-in', Boolean(user));
+            if (user) {
+                const name = String(user.email || 'You').split('@')[0];
+                if (accountLabel) accountLabel.textContent = name;
+                if (accountDot) accountDot.hidden = false;
+                accountBtn.setAttribute('aria-label', `Signed in as ${user.email}`);
+                accountBtn.title = `Signed in as ${user.email}`;
+            } else {
+                if (accountLabel) accountLabel.textContent = 'Log in';
+                if (accountDot) accountDot.hidden = true;
+                accountBtn.setAttribute('aria-label', 'Log in');
+                accountBtn.title = 'Log in';
+            }
+        }
+        const title = document.getElementById('account-modal-title');
+        if (title) title.textContent = user ? 'Account' : 'Log in';
         const cloudActions = document.getElementById('cloud-actions');
         if (cloudActions) cloudActions.hidden = !user;
         const inviteBtn = document.getElementById('header-invite-btn');
-        if (inviteBtn) inviteBtn.hidden = !user || currentList()?.role === 'editor';
+        if (inviteBtn) inviteBtn.hidden = !user || !currentList() || currentList()?.role === 'editor';
         if (signedOut) signedOut.hidden = !configured || Boolean(user);
         if (signedIn) signedIn.hidden = !user;
         if (emailLabel) emailLabel.textContent = user?.email || '';
@@ -2825,10 +2949,14 @@ document.addEventListener('DOMContentLoaded', () => {
             ...(state.deletedListIds || []),
             ...(window.OrbitSync?.deletedListIds?.() || [])
         ].map(String));
+        const blocked = (id) => (
+            window.OrbitSync?.listIsDeleted?.(id, gone) || gone.has(String(id))
+        );
         const goneTasks = new Set((state.deletedTaskIds || []).map(String));
-        state.lists = (remote.lists || []).filter((list) => !gone.has(String(list.id)));
+        const keepCurrent = state.currentListId;
+        state.lists = (remote.lists || []).filter((list) => !blocked(list.id));
         state.tasks = (remote.tasks || []).filter((task) => (
-            !gone.has(String(task.listId)) && !goneTasks.has(String(task.id))
+            !blocked(task.listId) && !goneTasks.has(String(task.id))
         ));
         state.tags = remote.tags;
         state.groups = remote.groups || [];
@@ -2838,11 +2966,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (localPetChoice) state.settings.petChoice = localPetChoice;
         }
         if (remote.bitsParams) state.bitsParams = remote.bitsParams;
-        if (remote.currentListId && !gone.has(String(remote.currentListId))) {
+        if (state.lists.some((list) => sameId(list.id, keepCurrent))) {
+            state.currentListId = keepCurrent;
+        } else if (remote.currentListId && state.lists.some((list) => sameId(list.id, remote.currentListId))) {
             state.currentListId = remote.currentListId;
-        }
-        if (!state.lists.some((list) => sameId(list.id, state.currentListId))) {
-            state.currentListId = state.lists[0]?.id || 'default';
+        } else {
+            state.currentListId = state.lists[0]?.id || '';
         }
         saveState({ skipSync: true });
         renderSidebar();
@@ -2901,11 +3030,44 @@ document.addEventListener('DOMContentLoaded', () => {
             applyTaskScale();
             document.getElementById('backup-restore-btn').hidden = !window.OrbitBackup?.readRestorePoint(localStorage, STATE_KEY);
             document.getElementById('backup-restore-hint').hidden = document.getElementById('backup-restore-btn').hidden;
-            refreshAccountUi();
+            showSettingsHome();
+            setSidebarOpen(false);
             openModal(prefsModal);
         });
+        document.getElementById('account-btn')?.addEventListener('click', () => {
+            refreshAccountUi();
+            openModal(document.getElementById('account-modal'));
+        });
+        document.getElementById('close-account-modal')?.addEventListener('click', () => {
+            closeModal(document.getElementById('account-modal'));
+        });
+        prefsModal.querySelectorAll('[data-settings-panel]').forEach((btn) => {
+            btn.addEventListener('click', () => openSettingsPanel(btn.dataset.settingsPanel));
+        });
+        prefsModal.querySelectorAll('.settings-back-btn').forEach((btn) => {
+            btn.addEventListener('click', showSettingsHome);
+        });
+        document.addEventListener('pointermove', (e) => {
+            if (!listDrag) return;
+            const dx = e.clientX - listDrag.x;
+            const dy = e.clientY - listDrag.y;
+            if (!listDrag.moved && Math.hypot(dx, dy) < 8) return;
+            listDrag.moved = true;
+            e.preventDefault();
+            listDrag.li.classList.add('dragging-list');
+            document.querySelectorAll('.list-group-header, .lists-nav').forEach((el) => {
+                const box = el.getBoundingClientRect();
+                const hit = e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
+                el.classList.toggle('drop-ready', hit);
+            });
+        }, { passive: false });
+        document.addEventListener('pointerup', finishSidebarListDrag);
+        document.addEventListener('pointercancel', finishSidebarListDrag);
         listColorPicker.addEventListener('input', () => setCurrentListColor(listColorPicker.value));
-        closePrefsModal.addEventListener('click', () => closeModal(prefsModal));
+        closePrefsModal.addEventListener('click', () => {
+            showSettingsHome();
+            closeModal(prefsModal);
+        });
         openThemeBtn.addEventListener('click', () => {
             closeModal(prefsModal);
             setWallpaperStatus('');
@@ -3020,18 +3182,71 @@ document.addEventListener('DOMContentLoaded', () => {
 
         saveSettingsBtn.addEventListener('click', saveListSettings);
         cancelSettingsBtn.addEventListener('click', () => closeModal(settingsModal));
-        document.getElementById('account-signin-btn')?.addEventListener('click', async () => {
-            const email = document.getElementById('account-email')?.value.trim();
+        const setAccountNote = (message, isError) => {
             const status = document.getElementById('account-status');
+            if (!status) return;
+            status.hidden = !message;
+            status.textContent = message || '';
+            status.classList.toggle('sync-error', Boolean(isError));
+        };
+        const readAccountEmail = () => document.getElementById('account-email')?.value.trim() || '';
+        const readAccountPassword = () => document.getElementById('account-password')?.value || '';
+        document.getElementById('account-login-btn')?.addEventListener('click', async () => {
+            const email = readAccountEmail();
+            const password = readAccountPassword();
+            if (!email.includes('@')) {
+                setAccountNote('Enter your email address.');
+                return;
+            }
+            if (password.length < 6) {
+                setAccountNote('Password needs at least 6 characters.');
+                return;
+            }
+            try {
+                await window.OrbitSync.signInWithPassword(email, password);
+                setAccountNote('');
+                refreshAccountUi();
+            } catch (err) {
+                setAccountNote(err.message || 'Could not log in.', true);
+            }
+        });
+        document.getElementById('account-signup-btn')?.addEventListener('click', async () => {
+            const email = readAccountEmail();
+            const password = readAccountPassword();
+            if (!email.includes('@')) {
+                setAccountNote('Enter your email address.');
+                return;
+            }
+            if (password.length < 6) {
+                setAccountNote('Password needs at least 6 characters.');
+                return;
+            }
+            try {
+                const data = await window.OrbitSync.signUpWithPassword(email, password);
+                if (data?.session) {
+                    setAccountNote('');
+                    refreshAccountUi();
+                } else {
+                    setAccountNote('Account created. Check your email if it asks you to confirm, then log in.');
+                }
+            } catch (err) {
+                setAccountNote(err.message || 'Could not create that account.', true);
+            }
+        });
+        document.getElementById('account-password')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') document.getElementById('account-login-btn')?.click();
+        });
+        document.getElementById('account-signin-btn')?.addEventListener('click', async () => {
+            const email = readAccountEmail();
             if (!email) {
-                if (status) { status.hidden = false; status.textContent = 'Enter your email first.'; }
+                setAccountNote('Enter your email first.');
                 return;
             }
             try {
                 await window.OrbitSync.sendMagicLink(email);
-                if (status) { status.hidden = false; status.textContent = 'Check your email for the sign-in link.'; }
+                setAccountNote('Check your email for the sign-in link.');
             } catch (err) {
-                if (status) { status.hidden = false; status.textContent = err.message || 'Could not send that link.'; }
+                setAccountNote(err.message || 'Could not send that link.', true);
             }
         });
         document.getElementById('account-sync-btn')?.addEventListener('click', async () => {
@@ -3054,6 +3269,10 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         document.getElementById('header-sync-btn')?.addEventListener('click', syncNow);
         const copyInvite = async (listId, status) => {
+            if (!listId) {
+                showNotice('Create a list first.');
+                return;
+            }
             try {
                 if (status) {
                     status.hidden = false;
