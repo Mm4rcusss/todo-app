@@ -114,6 +114,8 @@ begin
 end;
 $$;
 
+-- Owner membership is also upserted from the app after each list write.
+-- The trigger only fires on INSERT; upserts of existing rows need the JS insert.
 drop trigger if exists lists_add_owner_member on public.lists;
 create trigger lists_add_owner_member
 after insert on public.lists
@@ -244,3 +246,14 @@ grant execute on function public.redeem_list_invite(text) to authenticated;
 grant execute on function public.leave_shared_list(text) to authenticated;
 grant execute on function public.is_list_member(text) to authenticated;
 grant execute on function public.is_list_owner(text) to authenticated;
+
+grant select, insert, update, delete on
+    public.groups,
+    public.lists,
+    public.list_members,
+    public.list_invites,
+    public.tasks,
+    public.tags,
+    public.user_prefs
+to authenticated;
+grant usage on schema public to authenticated;

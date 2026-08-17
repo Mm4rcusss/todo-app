@@ -6,6 +6,7 @@
     let lastSyncAt = null;
     let lastError = '';
     let busy = false;
+    let pendingKind = null;
     let ready = false;
 
     function config() {
@@ -35,6 +36,36 @@
         return stamp(a?.updatedAt) >= stamp(b?.updatedAt) ? a : b;
     }
 
+    function formatError(err) {
+        if (!err) return 'Sync failed';
+        if (typeof err === 'string') return err;
+        const parts = [err.message, err.details, err.hint].filter(Boolean);
+        return parts.join(' — ') || 'Sync failed';
+    }
+
+    function mergeKinds(a, b) {
+        if (!a) return b;
+        if (!b) return a;
+        if (a === b) return a;
+        return 'both';
+    }
+
+    function homeListId(userId) {
+        return `home_${String(userId).replace(/-/g, '')}`;
+    }
+
+    function isHomeListId(id) {
+        const value = String(id || '');
+        return value === 'default' || value.startsWith('home_');
+    }
+
+    function settingsForCloud(settings) {
+        const copy = { ...(settings || {}) };
+        delete copy.pets;
+        delete copy.petChoice;
+        return copy;
+    }
+
     async function getClient() {
         if (!isConfigured() || !global.supabase?.createClient) return null;
         if (client) return client;
@@ -51,8 +82,12 @@
     async function sessionUser() {
         const sb = await getClient();
         if (!sb) return null;
-        const { data } = await sb.auth.getUser();
-        return data?.user || null;
+        const { data: userData, error: userError } = await sb.auth.getUser();
+        if (userData?.user) return userData.user;
+        const { data: sessionData } = await sb.auth.getSession();
+        if (sessionData?.session?.user) return sessionData.session.user;
+        if (userError && sessionData?.session) lastError = formatError(userError);
+        return null;
     }
 
     function redirectTo() {
@@ -139,10 +174,46 @@
         return [...map.values()];
     }
 
+    function ensureHomeListId(state, userId) {
+        if (!state || !userId) return false;
+        const homeId = homeListId(userId);
+        const lists = state.lists || [];
+        const defaultList = lists.find((list) => String(list.id) === 'default');
+        if (!defaultList) return false;
+
+        (state.tasks || []).forEach((task) => {
+            if (String(task.listId) === 'default') task.listId = homeId;
+        });
+        if (String(state.currentListId) === 'default') state.currentListId = homeId;
+
+        const homeList = lists.find((list) => String(list.id) === homeId);
+        if (homeList) {
+            const keep = newer(defaultList, homeList);
+            if (keep === defaultList) {
+                homeList.name = defaultList.name;
+                homeList.icon = defaultList.icon;
+                homeList.theme = defaultList.theme;
+                homeList.color = defaultList.color;
+                homeList.resetFrequency = defaultList.resetFrequency;
+                homeList.reset = defaultList.reset;
+                homeList.groupId = defaultList.groupId;
+                homeList.updatedAt = defaultList.updatedAt || nowIso();
+            }
+            state.lists = lists.filter((list) => String(list.id) !== 'default');
+        } else {
+            defaultList.id = homeId;
+            defaultList.updatedAt = defaultList.updatedAt || nowIso();
+        }
+        return true;
+    }
+
     async function pull() {
         const sb = await getClient();
         const user = await sessionUser();
         if (!sb || !user || !hooks.getState || !hooks.applyCloud) return;
+
+        const local = hooks.getState();
+        if (ensureHomeListId(local, user.id)) hooks.persistLocal?.();
 
         const [listsRes, membersRes, tasksRes, tagsRes, groupsRes, prefsRes] = await Promise.all([
             sb.from('lists').select('*'),
@@ -176,7 +247,6 @@
             updatedAt: row.updated_at
         }));
 
-        const local = hooks.getState();
         const ownedIds = new Set(
             (local.lists || [])
                 .filter((list) => list.role !== 'editor')
@@ -197,31 +267,30 @@
         const prefs = prefsRes.data;
         let settings = local.settings;
         let bitsParams = local.bitsParams;
-        let wallpaperAdjust = local.wallpaperAdjust;
-        let customThemes = local.customThemes;
         let currentListId = local.currentListId;
         if (prefs && stamp(prefs.updated_at) >= stamp(local.settings?.updatedAt)) {
+            const localPets = local.settings?.pets;
+            const localPetChoice = local.settings?.petChoice;
             settings = { ...(local.settings || {}), ...(prefs.settings || {}), updatedAt: prefs.updated_at };
+            if (localPets) settings.pets = localPets;
+            if (localPetChoice) settings.petChoice = localPetChoice;
             bitsParams = prefs.bits_params && typeof prefs.bits_params === 'object' ? prefs.bits_params : bitsParams;
-            wallpaperAdjust = prefs.wallpaper_adjust && typeof prefs.wallpaper_adjust === 'object'
-                ? prefs.wallpaper_adjust
-                : wallpaperAdjust;
-            if (Array.isArray(prefs.custom_themes)) customThemes = prefs.custom_themes;
             if (prefs.current_list_id) currentListId = prefs.current_list_id;
         }
+
+        const cloudState = { lists, tasks, currentListId };
+        ensureHomeListId(cloudState, user.id);
 
         lastSyncAt = nowIso();
         lastError = '';
         hooks.applyCloud({
-            lists,
-            tasks,
+            lists: cloudState.lists,
+            tasks: cloudState.tasks,
             tags,
             groups,
             settings,
             bitsParams,
-            wallpaperAdjust,
-            customThemes,
-            currentListId
+            currentListId: cloudState.currentListId
         });
     }
 
@@ -230,13 +299,28 @@
         const user = await sessionUser();
         if (!sb || !user || !hooks.getState) return;
         const state = hooks.getState();
+        if (ensureHomeListId(state, user.id)) hooks.persistLocal?.();
+
         const owned = (state.lists || []).filter((list) => list.role !== 'editor');
         const editable = state.lists || [];
         const editableIds = editable.map((list) => String(list.id));
 
         if (owned.length) {
-            const { error } = await sb.from('lists').upsert(owned.map((list) => toListRow(list, user.id)));
+            const { error } = await sb.from('lists').upsert(
+                owned.map((list) => toListRow(list, user.id)),
+                { onConflict: 'id' }
+            );
             if (error) throw error;
+
+            const { error: memberError } = await sb.from('list_members').upsert(
+                owned.map((list) => ({
+                    list_id: String(list.id),
+                    user_id: user.id,
+                    role: 'owner'
+                })),
+                { onConflict: 'list_id,user_id', ignoreDuplicates: true }
+            );
+            if (memberError) throw memberError;
         }
 
         const groups = (state.groups || []).map((group, index) => ({
@@ -247,7 +331,7 @@
             updated_at: group.updatedAt || nowIso()
         }));
         if (groups.length) {
-            const { error } = await sb.from('groups').upsert(groups);
+            const { error } = await sb.from('groups').upsert(groups, { onConflict: 'id' });
             if (error) throw error;
         }
 
@@ -269,7 +353,7 @@
 
         const localTasks = (state.tasks || []).filter((task) => editableIds.includes(String(task.listId)));
         if (localTasks.length) {
-            const { error } = await sb.from('tasks').upsert(localTasks.map(toTaskRow));
+            const { error } = await sb.from('tasks').upsert(localTasks.map(toTaskRow), { onConflict: 'id' });
             if (error) throw error;
         }
         if (editableIds.length) {
@@ -291,7 +375,7 @@
             updated_at: tag.updatedAt || nowIso()
         }));
         if (tags.length) {
-            const { error } = await sb.from('tags').upsert(tags);
+            const { error } = await sb.from('tags').upsert(tags, { onConflict: 'id' });
             if (error) throw error;
         }
         const { data: remoteTags } = await sb.from('tags').select('id').eq('user_id', user.id);
@@ -304,17 +388,13 @@
 
         const { error: prefsError } = await sb.from('user_prefs').upsert({
             user_id: user.id,
-            settings: state.settings || {},
+            settings: settingsForCloud(state.settings),
             bits_params: state.bitsParams || {},
-            wallpaper_adjust: state.wallpaperAdjust || {},
-            custom_themes: (state.customThemes || []).map((theme) => ({
-                id: theme.id,
-                name: theme.name,
-                color: theme.color
-            })),
+            wallpaper_adjust: {},
+            custom_themes: [],
             current_list_id: state.currentListId || null,
             updated_at: nowIso()
-        });
+        }, { onConflict: 'user_id' });
         if (prefsError) throw prefsError;
 
         lastSyncAt = nowIso();
@@ -322,17 +402,27 @@
     }
 
     async function run(kind) {
-        if (busy) return;
+        if (!kind) return;
+        if (busy) {
+            pendingKind = mergeKinds(pendingKind, kind);
+            return;
+        }
         busy = true;
+        pendingKind = mergeKinds(pendingKind, kind);
         try {
-            if (kind === 'pull' || kind === 'both') await pull();
-            if (kind === 'push' || kind === 'both') await push();
+            while (pendingKind) {
+                const next = pendingKind;
+                pendingKind = null;
+                if (next === 'pull' || next === 'both') await pull();
+                if (next === 'push' || next === 'both') await push();
+            }
         } catch (err) {
-            lastError = err?.message || 'Sync failed';
+            lastError = formatError(err);
             console.warn('Orbit sync', err);
         } finally {
             busy = false;
             hooks.onStatus?.();
+            if (pendingKind) run(pendingKind);
         }
     }
 
@@ -348,6 +438,7 @@
 
     const OrbitSync = {
         isConfigured,
+        isHomeListId,
         lastSyncAt() { return lastSyncAt; },
         lastError() { return lastError; },
         async user() {
@@ -393,6 +484,9 @@
             await sb.auth.signOut();
         },
         schedulePush,
+        async syncNow() {
+            await run('both');
+        },
         async createInvite(listId) {
             const sb = await getClient();
             const user = await sessionUser();
@@ -434,7 +528,7 @@
                 const next = `${location.pathname}${params.toString() ? `?${params}` : ''}${location.hash}`;
                 history.replaceState({}, '', next);
             } catch (err) {
-                lastError = err?.message || 'Could not join that list.';
+                lastError = formatError(err) || 'Could not join that list.';
                 hooks.onStatus?.();
             }
         },

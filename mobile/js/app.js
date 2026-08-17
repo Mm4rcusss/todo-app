@@ -139,6 +139,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return String(a) === String(b);
     }
 
+    function isHomeList(id) {
+        const value = String(id || '');
+        return value === 'default' || value.startsWith('home_') || Boolean(window.OrbitSync?.isHomeListId?.(id));
+    }
+
     function clamp(value, min, max) {
         return Math.min(max, Math.max(min, value));
     }
@@ -554,7 +559,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button type="button" class="btn-icon-small settings-list-btn" title="Settings" aria-label="List settings">
                     <svg class="icon-btn-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 0 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1Z"/></svg>
                 </button>
-                ${list.id !== 'default' ? `<button type="button" class="btn-icon-small delete-list-btn" title="${list.role === 'editor' ? 'Leave list' : 'Delete'}" aria-label="${list.role === 'editor' ? 'Leave list' : 'Delete list'}">×</button>` : ''}
+                ${!isHomeList(list.id) ? `<button type="button" class="btn-icon-small delete-list-btn" title="${list.role === 'editor' ? 'Leave list' : 'Delete'}" aria-label="${list.role === 'editor' ? 'Leave list' : 'Delete list'}">×</button>` : ''}
             </div>
         `;
 
@@ -2682,23 +2687,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (status) {
             status.hidden = !note;
             status.textContent = note;
+            status.classList.toggle('sync-error', Boolean(err));
         }
     }
 
     function applyCloudState(remote) {
+        const localPets = state.settings?.pets;
+        const localPetChoice = state.settings?.petChoice;
         state.lists = remote.lists;
         state.tasks = remote.tasks;
         state.tags = remote.tags;
         state.groups = remote.groups || [];
-        if (remote.settings) state.settings = { ...state.settings, ...remote.settings };
-        if (remote.bitsParams) state.bitsParams = remote.bitsParams;
-        if (remote.wallpaperAdjust) state.wallpaperAdjust = remote.wallpaperAdjust;
-        if (Array.isArray(remote.customThemes)) {
-            const have = new Set((state.customThemes || []).map((theme) => theme.id));
-            remote.customThemes.forEach((theme) => {
-                if (!have.has(theme.id)) state.customThemes.push(theme);
-            });
+        if (remote.settings) {
+            state.settings = { ...state.settings, ...remote.settings };
+            if (localPets) state.settings.pets = localPets;
+            if (localPetChoice) state.settings.petChoice = localPetChoice;
         }
+        if (remote.bitsParams) state.bitsParams = remote.bitsParams;
         if (remote.currentListId) state.currentListId = remote.currentListId;
         if (!state.lists.some((list) => sameId(list.id, state.currentListId))) {
             state.currentListId = state.lists[0]?.id || 'default';
@@ -2718,6 +2723,7 @@ document.addEventListener('DOMContentLoaded', () => {
         window.OrbitSync?.init({
             getState: () => state,
             applyCloud: applyCloudState,
+            persistLocal: () => saveState({ skipSync: true }),
             onAuth: () => { refreshAccountUi(); },
             onStatus: () => { refreshAccountUi(); }
         });
@@ -2875,6 +2881,16 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (err) {
                 if (status) { status.hidden = false; status.textContent = err.message || 'Could not send that link.'; }
             }
+        });
+        document.getElementById('account-sync-btn')?.addEventListener('click', async () => {
+            const status = document.getElementById('account-status');
+            if (status) {
+                status.hidden = false;
+                status.classList.remove('sync-error');
+                status.textContent = 'Syncing…';
+            }
+            await window.OrbitSync?.syncNow?.();
+            refreshAccountUi();
         });
         document.getElementById('account-signout-btn')?.addEventListener('click', async () => {
             await window.OrbitSync?.signOut();

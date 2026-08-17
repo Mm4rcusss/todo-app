@@ -1398,6 +1398,10 @@ header {
     color: var(--color-text-secondary);
 }
 
+.theme-upload-status.sync-error {
+    color: #ff8a8a;
+}
+
 .theme-option.custom-theme {
     background-size: cover;
     background-position: center;

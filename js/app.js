@@ -138,6 +138,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return String(a) === String(b);
     }
 
+    function isHomeList(id) {
+        const value = String(id || '');
+        return value === 'default' || value.startsWith('home_') || Boolean(window.OrbitSync?.isHomeListId?.(id));
+    }
+
     function clamp(value, min, max) {
         return Math.min(max, Math.max(min, value));
     }
@@ -553,7 +558,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <div class="list-actions">
                 <button type="button" class="btn-icon-small settings-list-btn" title="Settings" aria-label="List settings">⚙️</button>
-                ${list.id !== 'default' ? `<button type="button" class="btn-icon-small delete-list-btn" title="${list.role === 'editor' ? 'Leave list' : 'Delete'}" aria-label="${list.role === 'editor' ? 'Leave list' : 'Delete list'}">×</button>` : ''}
+                ${!isHomeList(list.id) ? `<button type="button" class="btn-icon-small delete-list-btn" title="${list.role === 'editor' ? 'Leave list' : 'Delete'}" aria-label="${list.role === 'editor' ? 'Leave list' : 'Delete list'}">×</button>` : ''}
             </div>
         `;
 
@@ -2659,23 +2664,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (status) {
             status.hidden = !note;
             status.textContent = note;
+            status.classList.toggle('sync-error', Boolean(err));
         }
     }
 
     function applyCloudState(remote) {
+        const localPets = state.settings?.pets;
+        const localPetChoice = state.settings?.petChoice;
         state.lists = remote.lists;
         state.tasks = remote.tasks;
         state.tags = remote.tags;
         state.groups = remote.groups || [];
-        if (remote.settings) state.settings = { ...state.settings, ...remote.settings };
-        if (remote.bitsParams) state.bitsParams = remote.bitsParams;
-        if (remote.wallpaperAdjust) state.wallpaperAdjust = remote.wallpaperAdjust;
-        if (Array.isArray(remote.customThemes)) {
-            const have = new Set((state.customThemes || []).map((theme) => theme.id));
-            remote.customThemes.forEach((theme) => {
-                if (!have.has(theme.id)) state.customThemes.push(theme);
-            });
+        if (remote.settings) {
+            state.settings = { ...state.settings, ...remote.settings };
+            if (localPets) state.settings.pets = localPets;
+            if (localPetChoice) state.settings.petChoice = localPetChoice;
         }
+        if (remote.bitsParams) state.bitsParams = remote.bitsParams;
         if (remote.currentListId) state.currentListId = remote.currentListId;
         if (!state.lists.some((list) => sameId(list.id, state.currentListId))) {
             state.currentListId = state.lists[0]?.id || 'default';
@@ -2695,6 +2700,7 @@ document.addEventListener('DOMContentLoaded', () => {
         window.OrbitSync?.init({
             getState: () => state,
             applyCloud: applyCloudState,
+            persistLocal: () => saveState({ skipSync: true }),
             onAuth: () => { refreshAccountUi(); },
             onStatus: () => { refreshAccountUi(); }
         });
@@ -2851,6 +2857,16 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (err) {
                 if (status) { status.hidden = false; status.textContent = err.message || 'Could not send that link.'; }
             }
+        });
+        document.getElementById('account-sync-btn')?.addEventListener('click', async () => {
+            const status = document.getElementById('account-status');
+            if (status) {
+                status.hidden = false;
+                status.classList.remove('sync-error');
+                status.textContent = 'Syncing…';
+            }
+            await window.OrbitSync?.syncNow?.();
+            refreshAccountUi();
         });
         document.getElementById('account-signout-btn')?.addEventListener('click', async () => {
             await window.OrbitSync?.signOut();
