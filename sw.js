@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tasks-app-v25';
+const CACHE_NAME = 'tasks-app-v26';
 const PRECACHE_URLS = [
     './',
     './index.html',
@@ -7,6 +7,8 @@ const PRECACHE_URLS = [
     './js/effects.js',
     './js/backup.js',
     './js/pet.js',
+    './js/sync.js',
+    './js/supabase-config.js',
     './manifest.json',
     './favicon.svg',
     './favicon-32.png',
@@ -44,6 +46,7 @@ function isAppShell(request) {
 self.addEventListener('fetch', (event) => {
     const { request } = event;
     if (request.method !== 'GET' || !request.url.startsWith('http')) return;
+    if (request.url.includes('supabase.co')) return;
 
     if (isAppShell(request)) {
         event.respondWith(

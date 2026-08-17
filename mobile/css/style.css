@@ -227,6 +227,37 @@ body {
     overflow-y: auto;
 }
 
+.list-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    padding: 0.55rem 0.35rem 0.25rem;
+    margin: 0.55rem 0 0.2rem;
+    color: var(--color-text-secondary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    list-style: none;
+}
+
+.list-item.in-group {
+    margin-left: 0.55rem;
+}
+
+.list-shared {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    opacity: 0.7;
+}
+
+#account-signed-out .modal-input {
+    margin-bottom: 0.55rem;
+}
+
 .sidebar-footer {
     margin-top: auto;
     display: flex;

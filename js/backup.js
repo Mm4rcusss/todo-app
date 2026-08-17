@@ -57,7 +57,8 @@
             theme: clip(list.theme, 80) || 'rb-particles',
             color: isHexColor(list.color) ? list.color : '#b19eef',
             resetFrequency: clip(list.resetFrequency, 20) || 'none',
-            reset: sanitizeReset(list.reset)
+            reset: sanitizeReset(list.reset),
+            groupId: clip(list.groupId, 80)
         };
     }
 
@@ -104,6 +105,18 @@
         };
     }
 
+    function sanitizeGroup(group) {
+        if (!group || typeof group !== 'object') return null;
+        const id = clip(group.id, 80);
+        const name = clip(group.name, 40).trim() || 'Group';
+        if (!id) return null;
+        return {
+            id,
+            name,
+            sort: Number.isFinite(Number(group.sort)) ? Number(group.sort) : 0
+        };
+    }
+
     function sanitizeSettings(settings) {
         if (!settings || typeof settings !== 'object') return {};
         return clone(settings);
@@ -129,6 +142,7 @@
             lists,
             tasks,
             tags,
+            groups: (Array.isArray(data.groups) ? data.groups : []).map(sanitizeGroup).filter(Boolean),
             currentListId,
             settings: sanitizeSettings(data.settings),
             customThemes,
@@ -179,6 +193,7 @@
                 lists,
                 tasks: (state.tasks || []).map(sanitizeTask).filter(Boolean),
                 tags: (state.tags || []).map(sanitizeTag).filter(Boolean),
+                groups: (state.groups || []).map(sanitizeGroup).filter(Boolean),
                 currentListId: clip(state.currentListId, 80),
                 settings: sanitizeSettings(state.settings),
                 customThemes: (state.customThemes || []).map(sanitizeTheme).filter(Boolean),
@@ -248,6 +263,17 @@
             lists.push({ ...list, id: nextId, theme });
         });
 
+        const groupMap = new Map();
+        const groups = [...(current.groups || [])];
+        (imported.data.groups || []).forEach((group) => {
+            const nextId = uid('group_');
+            groupMap.set(group.id, nextId);
+            groups.push({ ...group, id: nextId });
+        });
+        lists.forEach((list) => {
+            if (list.groupId && groupMap.has(list.groupId)) list.groupId = groupMap.get(list.groupId);
+        });
+
         const tags = [...(current.tags || [])];
         (imported.data.tags || []).forEach((tag) => {
             const nextId = uid('tag_');
@@ -278,6 +304,7 @@
                 lists,
                 tasks,
                 tags,
+                groups,
                 currentListId: current.currentListId,
                 settings: current.settings || {},
                 customThemes,
@@ -344,6 +371,7 @@
             lists: clone(state.lists || []),
             tasks: clone(state.tasks || []),
             tags: clone(state.tags || []),
+            groups: clone(state.groups || []),
             currentListId: state.currentListId,
             settings: clone(state.settings || {}),
             customThemes: clone(state.customThemes || []),

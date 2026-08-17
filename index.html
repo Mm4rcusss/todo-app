@@ -54,6 +54,7 @@
             </div>
             <ul class="lists-nav" id="lists-nav"></ul>
             <button type="button" id="add-list-btn" class="btn-text">+ New List</button>
+            <button type="button" id="add-group-btn" class="btn-text">+ New group</button>
 
             <div class="sidebar-footer">
                 <div class="calendar-mini" id="calendar-mini"></div>
@@ -173,6 +174,19 @@
     <div id="prefs-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="prefs-modal-title">
         <div class="modal-content">
             <h3 id="prefs-modal-title">Settings</h3>
+            <div class="setting-group" id="account-group">
+                <label>Account</label>
+                <p class="setting-hint" id="account-hint">Optional. Sign in to sync lists across devices and share a list with someone.</p>
+                <div id="account-signed-out">
+                    <input type="email" id="account-email" class="modal-input" placeholder="you@email.com" autocomplete="email">
+                    <button type="button" id="account-signin-btn" class="settings-link">Send sign-in link</button>
+                </div>
+                <div id="account-signed-in" hidden>
+                    <p id="account-email-label" class="setting-hint"></p>
+                    <button type="button" id="account-signout-btn" class="settings-link">Sign out</button>
+                </div>
+                <p id="account-status" class="theme-upload-status" hidden></p>
+            </div>
             <div class="setting-group">
                 <button type="button" id="enter-edit-btn" class="settings-link desktop-only">Enter edit mode</button>
                 <button type="button" id="open-theme-btn" class="settings-link">Customize background</button>
@@ -282,6 +296,18 @@
         <div class="modal-content">
             <h3 id="settings-modal-title">List Settings</h3>
             <div class="setting-group">
+                <label for="list-group-select">Group</label>
+                <select id="list-group-select">
+                    <option value="">No group</option>
+                </select>
+            </div>
+            <div class="setting-group" id="share-list-group">
+                <label>Share this list</label>
+                <p class="setting-hint">They will need to sign in, then this list appears in their sidebar.</p>
+                <button type="button" id="share-list-btn" class="settings-link">Copy invite link</button>
+                <p id="share-list-status" class="theme-upload-status" hidden></p>
+            </div>
+            <div class="setting-group">
                 <label for="list-reset-select">Reset Frequency</label>
                 <select id="list-reset-select">
                     <option value="none">Does not reset</option>
@@ -341,8 +367,11 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <script src="js/supabase-config.js"></script>
     <script src="js/effects.js"></script>
     <script src="js/backup.js"></script>
+    <script src="js/sync.js"></script>
     <script src="js/pet.js"></script>
     <script src="js/app.js"></script>
     <script>

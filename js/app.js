@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const clearCompletedBtn = document.getElementById('clear-completed');
     const listsNav = document.getElementById('lists-nav');
     const addListBtn = document.getElementById('add-list-btn');
+    const addGroupBtn = document.getElementById('add-group-btn');
     const listTitle = document.getElementById('list-title');
     const currentDateEl = document.getElementById('current-date');
     const calendarMini = document.getElementById('calendar-mini');
@@ -298,6 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
             { id: 'work', name: 'Work', color: '#00bfff' }
         ],
         currentListId: 'default',
+        groups: [],
         currentDate: todayLocal(),
         viewDate: todayLocal(),
         settings: {
@@ -333,6 +335,7 @@ document.addEventListener('DOMContentLoaded', () => {
         applyTheme(list?.theme || DEFAULT_THEME);
         renderWidgets();
         window.BitsFX?.initUI({ addBtn });
+        bindCloud();
         if (state.settings.sidebar.mode === 'dock' && window.matchMedia('(min-width: 769px)').matches) {
             setSidebarOpen(true);
         }
@@ -353,6 +356,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (!Array.isArray(state.tasks)) state.tasks = [];
             if (!Array.isArray(state.tags)) state.tags = [];
+            if (!Array.isArray(state.groups)) state.groups = [];
             if (!state.settings) state.settings = {};
             if (!state.settings.sortBy) state.settings.sortBy = 'custom';
             if (!state.settings.sidebar) state.settings.sidebar = { side: 'left', mode: 'dock' };
@@ -418,6 +422,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!list.theme) list.theme = DEFAULT_THEME;
                 if (!list.color) list.color = DEFAULT_ACCENT;
                 if (!list.resetFrequency) list.resetFrequency = 'none';
+                if (!list.groupId) list.groupId = '';
+                if (list.role !== 'editor') list.role = 'owner';
                 list.reset = normalizeReset(list);
             });
             state.tasks.forEach((task, index) => {
@@ -430,12 +436,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function saveState() {
+    function saveState(options = {}) {
         try {
             localStorage.setItem('nanobanana_state', JSON.stringify(state));
         } catch (err) {
             console.warn('Could not save tasks.', err);
         }
+        if (!options.skipSync) window.OrbitSync?.schedulePush();
     }
 
     function checkRecurringLists() {
@@ -535,60 +542,95 @@ document.addEventListener('DOMContentLoaded', () => {
         currentDateEl.textContent = resetLabel(list) || parseLocalDate(state.currentDate).toLocaleDateString('en-US', DATE_FORMAT);
     }
 
-    function renderSidebar() {
-        listsNav.replaceChildren();
+    function renderListRow(list, inGroup) {
+        const li = document.createElement('li');
+        li.className = `list-item${sameId(list.id, state.currentListId) ? ' active' : ''}${inGroup ? ' in-group' : ''}`;
+        const sharedMark = list.role === 'editor' ? ' <span class="list-shared">shared</span>' : '';
+        li.innerHTML = `
+            <div class="list-info">
+                <span class="list-dot" style="background-color: ${escapeHtml(list.color || DEFAULT_ACCENT)};"></span>
+                <span class="list-name">${escapeHtml(list.name)}${sharedMark}</span>
+            </div>
+            <div class="list-actions">
+                <button type="button" class="btn-icon-small settings-list-btn" title="Settings" aria-label="List settings">⚙️</button>
+                ${list.id !== 'default' ? `<button type="button" class="btn-icon-small delete-list-btn" title="${list.role === 'editor' ? 'Leave list' : 'Delete'}" aria-label="${list.role === 'editor' ? 'Leave list' : 'Delete list'}">×</button>` : ''}
+            </div>
+        `;
 
-        state.lists.forEach((list) => {
-            const li = document.createElement('li');
-            li.className = `list-item${sameId(list.id, state.currentListId) ? ' active' : ''}`;
+        li.addEventListener('click', (e) => {
+            if (e.target.closest('.btn-icon-small')) return;
+            state.currentListId = list.id;
+            applyTheme(list.theme || DEFAULT_THEME);
+            saveState();
+            renderSidebar();
+            renderHeader();
+            renderTodos();
+        });
 
-            li.innerHTML = `
-                <div class="list-info">
-                    <span class="list-dot" style="background-color: ${escapeHtml(list.color || DEFAULT_ACCENT)};"></span>
-                    <span class="list-name">${escapeHtml(list.name)}</span>
-                </div>
-                <div class="list-actions">
-                    <button type="button" class="btn-icon-small settings-list-btn" title="Settings" aria-label="List settings">⚙️</button>
-                    ${list.id !== 'default' ? '<button type="button" class="btn-icon-small delete-list-btn" title="Delete" aria-label="Delete list">×</button>' : ''}
-                </div>
-            `;
+        li.querySelector('.settings-list-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openListSettings(list.id);
+        });
 
-            li.addEventListener('click', (e) => {
-                if (e.target.closest('.btn-icon-small')) return;
-                state.currentListId = list.id;
-                applyTheme(list.theme || DEFAULT_THEME);
+        const deleteBtn = li.querySelector('.delete-list-btn');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const leaving = list.role === 'editor';
+                const confirmed = await showConfirm(
+                    leaving
+                        ? `Leave shared list "${list.name}"?`
+                        : `Delete list "${list.name}" and all its tasks?`
+                );
+                if (!confirmed) return;
+                if (leaving) {
+                    try { await window.OrbitSync?.leaveList(list.id); } catch { /* still remove locally */ }
+                }
+                state.lists = state.lists.filter((item) => !sameId(item.id, list.id));
+                if (!leaving) state.tasks = state.tasks.filter((task) => !sameId(task.listId, list.id));
+                if (sameId(state.currentListId, list.id)) {
+                    state.currentListId = state.lists[0]?.id || 'default';
+                    applyTheme(currentList()?.theme || DEFAULT_THEME);
+                }
                 saveState();
                 renderSidebar();
                 renderHeader();
                 renderTodos();
+                refreshCalendarMarkers();
             });
+        }
+        return li;
+    }
 
-            li.querySelector('.settings-list-btn').addEventListener('click', (e) => {
+    function renderSidebar() {
+        listsNav.replaceChildren();
+        const groups = [...(state.groups || [])].sort((a, b) => (a.sort || 0) - (b.sort || 0));
+        const groupedIds = new Set(groups.map((group) => group.id));
+        const ungrouped = state.lists.filter((list) => !list.groupId || !groupedIds.has(list.groupId));
+        ungrouped.forEach((list) => listsNav.appendChild(renderListRow(list, false)));
+
+        groups.forEach((group) => {
+            const header = document.createElement('li');
+            header.className = 'list-group-header';
+            header.innerHTML = `
+                <span>${escapeHtml(group.name)}</span>
+                <button type="button" class="btn-icon-small delete-group-btn" title="Remove group" aria-label="Remove group">×</button>
+            `;
+            header.querySelector('.delete-group-btn').addEventListener('click', async (e) => {
                 e.stopPropagation();
-                openListSettings(list.id);
-            });
-
-            const deleteBtn = li.querySelector('.delete-list-btn');
-            if (deleteBtn) {
-                deleteBtn.addEventListener('click', async (e) => {
-                    e.stopPropagation();
-                    const confirmed = await showConfirm(`Delete list "${list.name}" and all its tasks?`);
-                    if (!confirmed) return;
-                    state.lists = state.lists.filter((item) => !sameId(item.id, list.id));
-                    state.tasks = state.tasks.filter((task) => !sameId(task.listId, list.id));
-                    if (sameId(state.currentListId, list.id)) {
-                        state.currentListId = 'default';
-                        applyTheme(currentList()?.theme || DEFAULT_THEME);
-                    }
-                    saveState();
-                    renderSidebar();
-                    renderHeader();
-                    renderTodos();
-                    refreshCalendarMarkers();
+                const confirmed = await showConfirm(`Remove group "${group.name}"? Lists stay, they just move out.`);
+                if (!confirmed) return;
+                state.lists.forEach((list) => {
+                    if (sameId(list.groupId, group.id)) list.groupId = '';
                 });
-            }
-
-            listsNav.appendChild(li);
+                state.groups = state.groups.filter((item) => !sameId(item.id, group.id));
+                saveState();
+                renderSidebar();
+            });
+            listsNav.appendChild(header);
+            state.lists
+                .filter((list) => sameId(list.groupId, group.id))
+                .forEach((list) => listsNav.appendChild(renderListRow(list, true)));
         });
     }
 
@@ -842,7 +884,9 @@ document.addEventListener('DOMContentLoaded', () => {
             theme: DEFAULT_THEME,
             color: DEFAULT_ACCENT,
             resetFrequency: 'none',
-            reset: { type: 'none' }
+            reset: { type: 'none' },
+            groupId: '',
+            role: 'owner'
         };
         state.lists.push(newList);
         state.currentListId = newList.id;
@@ -851,6 +895,20 @@ document.addEventListener('DOMContentLoaded', () => {
         renderSidebar();
         renderHeader();
         renderTodos();
+    }
+
+    async function addNewGroup() {
+        const name = await showInput('New group name:', 'School');
+        if (!name) return;
+        if (!Array.isArray(state.groups)) state.groups = [];
+        state.groups.push({
+            id: uid('group_'),
+            name,
+            sort: state.groups.length,
+            updatedAt: new Date().toISOString()
+        });
+        saveState();
+        renderSidebar();
     }
 
     async function clearCompleted() {
@@ -1044,6 +1102,24 @@ document.addEventListener('DOMContentLoaded', () => {
         resetDateInput.value = reset.date || '';
         resetStartInput.value = reset.startDate || '';
         resetEndInput.value = reset.endDate || '';
+        const groupSelect = document.getElementById('list-group-select');
+        if (groupSelect) {
+            groupSelect.innerHTML = '<option value="">No group</option>';
+            (state.groups || []).forEach((group) => {
+                const option = document.createElement('option');
+                option.value = group.id;
+                option.textContent = group.name;
+                if (sameId(group.id, list.groupId)) option.selected = true;
+                groupSelect.appendChild(option);
+            });
+        }
+        const shareGroup = document.getElementById('share-list-group');
+        if (shareGroup) shareGroup.hidden = list.role === 'editor';
+        const shareStatus = document.getElementById('share-list-status');
+        if (shareStatus) {
+            shareStatus.hidden = true;
+            shareStatus.textContent = '';
+        }
         syncResetFields();
         openModal(settingsModal);
     }
@@ -1068,6 +1144,9 @@ document.addEventListener('DOMContentLoaded', () => {
             list.resetFrequency = type === 'interval' && list.reset.interval === 1 && list.reset.unit === 'days'
                 ? 'daily'
                 : type;
+            const groupSelect = document.getElementById('list-group-select');
+            if (groupSelect) list.groupId = groupSelect.value || '';
+            list.updatedAt = new Date().toISOString();
             saveState();
             renderSidebar();
             renderHeader();
@@ -2415,6 +2494,7 @@ document.addEventListener('DOMContentLoaded', () => {
         state.lists = next.data.lists;
         state.tasks = next.data.tasks;
         state.tags = next.data.tags;
+        if (Array.isArray(next.data.groups)) state.groups = next.data.groups;
         state.currentListId = next.data.currentListId;
         state.customThemes = next.data.customThemes;
         state.bitsParams = next.data.bitsParams;
@@ -2557,6 +2637,70 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    async function refreshAccountUi() {
+        const hint = document.getElementById('account-hint');
+        const signedOut = document.getElementById('account-signed-out');
+        const signedIn = document.getElementById('account-signed-in');
+        const emailLabel = document.getElementById('account-email-label');
+        const status = document.getElementById('account-status');
+        const configured = Boolean(window.OrbitSync?.isConfigured());
+        if (hint) {
+            hint.textContent = configured
+                ? 'Optional. Sign in to sync lists across devices and share a list with someone.'
+                : 'Cloud sync is not configured. Add your Supabase URL and anon key in js/supabase-config.js.';
+        }
+        const user = configured ? await window.OrbitSync.user() : null;
+        if (signedOut) signedOut.hidden = !configured || Boolean(user);
+        if (signedIn) signedIn.hidden = !user;
+        if (emailLabel) emailLabel.textContent = user?.email || '';
+        const err = window.OrbitSync?.lastError();
+        const synced = window.OrbitSync?.lastSyncAt();
+        const note = err || (synced ? `Last sync ${new Date(synced).toLocaleString()}` : '');
+        if (status) {
+            status.hidden = !note;
+            status.textContent = note;
+        }
+    }
+
+    function applyCloudState(remote) {
+        state.lists = remote.lists;
+        state.tasks = remote.tasks;
+        state.tags = remote.tags;
+        state.groups = remote.groups || [];
+        if (remote.settings) state.settings = { ...state.settings, ...remote.settings };
+        if (remote.bitsParams) state.bitsParams = remote.bitsParams;
+        if (remote.wallpaperAdjust) state.wallpaperAdjust = remote.wallpaperAdjust;
+        if (Array.isArray(remote.customThemes)) {
+            const have = new Set((state.customThemes || []).map((theme) => theme.id));
+            remote.customThemes.forEach((theme) => {
+                if (!have.has(theme.id)) state.customThemes.push(theme);
+            });
+        }
+        if (remote.currentListId) state.currentListId = remote.currentListId;
+        if (!state.lists.some((list) => sameId(list.id, state.currentListId))) {
+            state.currentListId = state.lists[0]?.id || 'default';
+        }
+        saveState({ skipSync: true });
+        renderSidebar();
+        renderCalendar();
+        renderHeader();
+        renderTodos();
+        applyTheme(currentList()?.theme || DEFAULT_THEME);
+        renderWidgets();
+        syncLayoutModal();
+        refreshAccountUi();
+    }
+
+    function bindCloud() {
+        window.OrbitSync?.init({
+            getState: () => state,
+            applyCloud: applyCloudState,
+            onAuth: () => { refreshAccountUi(); },
+            onStatus: () => { refreshAccountUi(); }
+        });
+        refreshAccountUi();
+    }
+
     function setupEventListeners() {
         addBtn.addEventListener('click', addTodo);
         todoInput.addEventListener('keydown', (e) => {
@@ -2564,6 +2708,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         clearCompletedBtn.addEventListener('click', clearCompleted);
         addListBtn.addEventListener('click', addNewList);
+        addGroupBtn?.addEventListener('click', addNewGroup);
         menuBtn.addEventListener('click', toggleSidebar);
         closeSidebarBtn.addEventListener('click', () => setSidebarOpen(false));
         sidebarOverlay.addEventListener('click', () => setSidebarOpen(false));
@@ -2575,6 +2720,7 @@ document.addEventListener('DOMContentLoaded', () => {
             applyTaskScale();
             document.getElementById('backup-restore-btn').hidden = !window.OrbitBackup?.readRestorePoint(localStorage, STATE_KEY);
             document.getElementById('backup-restore-hint').hidden = document.getElementById('backup-restore-btn').hidden;
+            refreshAccountUi();
             openModal(prefsModal);
         });
         listColorPicker.addEventListener('input', () => setCurrentListColor(listColorPicker.value));
@@ -2692,6 +2838,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
         saveSettingsBtn.addEventListener('click', saveListSettings);
         cancelSettingsBtn.addEventListener('click', () => closeModal(settingsModal));
+        document.getElementById('account-signin-btn')?.addEventListener('click', async () => {
+            const email = document.getElementById('account-email')?.value.trim();
+            const status = document.getElementById('account-status');
+            if (!email) {
+                if (status) { status.hidden = false; status.textContent = 'Enter your email first.'; }
+                return;
+            }
+            try {
+                await window.OrbitSync.sendMagicLink(email);
+                if (status) { status.hidden = false; status.textContent = 'Check your email for the sign-in link.'; }
+            } catch (err) {
+                if (status) { status.hidden = false; status.textContent = err.message || 'Could not send that link.'; }
+            }
+        });
+        document.getElementById('account-signout-btn')?.addEventListener('click', async () => {
+            await window.OrbitSync?.signOut();
+            refreshAccountUi();
+        });
+        document.getElementById('share-list-btn')?.addEventListener('click', async () => {
+            const status = document.getElementById('share-list-status');
+            try {
+                const link = await window.OrbitSync.createInvite(settingsListId);
+                try {
+                    await navigator.clipboard.writeText(link);
+                    if (status) { status.hidden = false; status.textContent = 'Invite link copied.'; }
+                } catch {
+                    if (status) { status.hidden = false; status.textContent = link; }
+                }
+            } catch (err) {
+                if (status) { status.hidden = false; status.textContent = err.message || 'Could not create an invite.'; }
+            }
+        });
 
         document.getElementById('save-tag-btn').addEventListener('click', saveNewTag);
         document.getElementById('cancel-tag-btn').addEventListener('click', () => {
