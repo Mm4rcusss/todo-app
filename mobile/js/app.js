@@ -3944,7 +3944,53 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function isTypingTarget(el) {
+        if (!el || el === document.body || el === document.documentElement) return false;
+        if (el.isContentEditable) return true;
+        if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') return false;
+        const type = String(el.type || 'text').toLowerCase();
+        return !['checkbox', 'radio', 'range', 'color', 'file', 'button', 'submit', 'reset', 'hidden'].includes(type);
+    }
+
+    function captureEditor() {
+        const el = document.activeElement;
+        if (!isTypingTarget(el)) return null;
+        return {
+            taskId: el.closest('.todo-item')?.dataset.id || '',
+            isTitle: el.classList.contains('header-title-input'),
+            id: el.id || '',
+            value: 'value' in el ? el.value : '',
+            start: el.selectionStart,
+            end: el.selectionEnd
+        };
+    }
+
+    function restoreEditor(snap) {
+        if (!snap) return;
+        const apply = () => {
+            let el = null;
+            if (snap.taskId) {
+                el = todoList.querySelector(`.todo-item[data-id="${CSS.escape(String(snap.taskId))}"] .todo-input-edit`);
+            } else if (snap.isTitle) {
+                el = listTitle.querySelector('.header-title-input');
+            } else if (snap.id) {
+                el = document.getElementById(snap.id);
+            }
+            if (!el || !isTypingTarget(el)) return;
+            if (snap.value != null && 'value' in el && el.value !== snap.value) el.value = snap.value;
+            el.focus({ preventScroll: true });
+            try {
+                const start = Number.isInteger(snap.start) ? snap.start : el.value.length;
+                const end = Number.isInteger(snap.end) ? snap.end : start;
+                el.setSelectionRange(start, end);
+            } catch { /* ignore */ }
+        };
+        apply();
+        requestAnimationFrame(apply);
+    }
+
     function applyCloudState(remote) {
+        const editor = captureEditor();
         const localPets = state.settings?.pets;
         const localPetChoice = state.settings?.petChoice;
         const gone = new Set([
@@ -3994,17 +4040,34 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             state.currentListId = state.lists[0]?.id || '';
         }
+        if (editor?.taskId) {
+            const task = state.tasks.find((item) => String(item.id) === String(editor.taskId));
+            if (task && typeof editor.value === 'string' && task.text !== editor.value) {
+                task.text = editor.value;
+                task.updatedAt = new Date().toISOString();
+            }
+        }
+        if (editor?.isTitle) {
+            const list = currentList();
+            if (list && String(editor.value || '').trim() && list.name !== editor.value.trim()) {
+                list.name = editor.value.trim();
+                list.updatedAt = new Date().toISOString();
+            }
+        }
         saveState({ skipSync: true });
         renderSidebar();
         renderCalendar();
         renderHeader();
         renderTodos();
-        applyTheme(currentList()?.theme || DEFAULT_THEME);
-        renderThemeOptions();
-        renderWidgets();
-        syncLayoutModal();
-        refreshAccountUi();
-        applyLoginChip();
+        if (!editor) {
+            applyTheme(currentList()?.theme || DEFAULT_THEME);
+            renderThemeOptions();
+            renderWidgets();
+            syncLayoutModal();
+            refreshAccountUi();
+            applyLoginChip();
+        }
+        restoreEditor(editor);
     }
 
     function bindCloud() {
@@ -4012,14 +4075,19 @@ document.addEventListener('DOMContentLoaded', () => {
             getState: () => state,
             applyCloud: applyCloudState,
             persistLocal: () => saveState({ skipSync: true }),
+            isEditing: () => Boolean(isTypingTarget(document.activeElement)),
             wallpaperGet,
             wallpaperPut,
             onMedia: () => {
+                if (isTypingTarget(document.activeElement)) return;
                 renderThemeOptions();
                 applyTheme(currentList()?.theme || DEFAULT_THEME);
             },
             onAuth: () => { refreshAccountUi(); },
-            onStatus: () => { refreshAccountUi(); },
+            onStatus: () => {
+                if (isTypingTarget(document.activeElement)) return;
+                refreshAccountUi();
+            },
             onInvitePending: () => {
                 showNotice('Sign in to join that shared list.');
                 refreshAccountUi();

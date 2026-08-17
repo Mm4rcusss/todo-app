@@ -448,8 +448,12 @@
     }
 
     let wallpaperBusy = false;
+    function editingNow() {
+        return Boolean(hooks.isEditing?.());
+    }
+
     async function pullWallpaperState() {
-        if (wallpaperBusy || syncPrefs().mode === 'off') return;
+        if (wallpaperBusy || syncPrefs().mode === 'off' || editingNow()) return;
         const sb = await getClient();
         const user = await sessionUser();
         const state = hooks.getState?.();
@@ -956,6 +960,11 @@
             cloudState.currentListId = cloudState.lists[0]?.id || '';
         }
 
+        if (editingNow()) {
+            pendingKind = mergeKinds(pendingKind, 'pull');
+            return;
+        }
+
         lastSyncAt = nowIso();
         lastError = '';
         rememberKnown('list', keptListIds);
@@ -1190,7 +1199,13 @@
                 pendingKind = null;
                 if (next === 'push' || next === 'both') await push();
                 const allowPull = options.force || (!pullBlocked && prefsNow.mode === 'live');
-                if ((next === 'pull' || next === 'both') && allowPull) await pull();
+                if ((next === 'pull' || next === 'both') && allowPull) {
+                    if (!options.force && editingNow()) {
+                        pendingKind = mergeKinds(pendingKind, 'pull');
+                        break;
+                    }
+                    await pull();
+                }
             }
         } catch (err) {
             lastError = formatError(err);
@@ -1199,7 +1214,9 @@
         } finally {
             busy = false;
             hooks.onStatus?.();
-            if (pendingKind) run(pendingKind, options);
+            if (!pendingKind) return;
+            if (!options.force && editingNow() && pendingKind === 'pull') return;
+            run(pendingKind, options);
         }
     }
 
@@ -1207,8 +1224,16 @@
         if (!isConfigured() || !ready) return;
         if (syncPrefs().mode !== 'off') void pullWallpaperState();
         if (pullBlocked || syncPrefs().mode !== 'live') return;
+        if (editingNow()) {
+            pendingKind = mergeKinds(pendingKind, 'pull');
+            return;
+        }
         sessionUser().then((user) => {
             if (!user) return;
+            if (editingNow()) {
+                pendingKind = mergeKinds(pendingKind, 'pull');
+                return;
+            }
             if (pushTimer) {
                 pendingKind = mergeKinds(pendingKind, 'pull');
                 return;
@@ -1379,6 +1404,12 @@
                 if (!document.hidden) schedulePull();
             });
             window.addEventListener('focus', () => schedulePull());
+            document.addEventListener('focusout', () => {
+                global.setTimeout(() => {
+                    if (editingNow()) return;
+                    if (pendingKind === 'pull' || pendingKind === 'both') schedulePull();
+                }, 80);
+            });
             await OrbitSync.consumeInviteFromUrl();
             ready = true;
             if (await sessionUser()) {
