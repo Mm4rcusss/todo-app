@@ -1390,6 +1390,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderTodos() {
+        if (taskDragActive) return;
+        sweepOrphanTodos();
         const noList = !currentList();
         const emptyCopy = emptyState.querySelector('p');
         const emptyHint = emptyState.querySelector('span');
@@ -1668,6 +1670,18 @@ document.addEventListener('DOMContentLoaded', () => {
         el.style.maxWidth = 'none';
     }
 
+    let taskDragActive = false;
+
+    function sweepOrphanTodos() {
+        document.querySelectorAll('body > .todo-item').forEach((el) => el.remove());
+    }
+
+    function clearTodoMotion(el) {
+        if (!el) return;
+        el.removeAttribute('style');
+        el.classList.remove('dragging');
+    }
+
     function bindTreeDrag(row) {
         const handle = row.querySelector('.list-drag-handle');
         if (!handle) return;
@@ -1828,9 +1842,9 @@ document.addEventListener('DOMContentLoaded', () => {
             dragging = false;
             cancelAnimationFrame(scrollRaf);
             handle.releasePointerCapture?.(event.pointerId);
-            handle.removeEventListener('pointermove', onMove);
-            handle.removeEventListener('pointerup', end);
-            handle.removeEventListener('pointercancel', end);
+            document.removeEventListener('pointermove', onMove, true);
+            document.removeEventListener('pointerup', end, true);
+            document.removeEventListener('pointercancel', end, true);
             hidden.forEach((row) => { row.hidden = false; });
             listsNav.querySelectorAll('.drop-into').forEach((el) => el.classList.remove('drop-into'));
             if (!moved) {
@@ -1854,9 +1868,9 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         const end = () => finish();
-        handle.addEventListener('pointermove', onMove);
-        handle.addEventListener('pointerup', end);
-        handle.addEventListener('pointercancel', end);
+        document.addEventListener('pointermove', onMove, true);
+        document.addEventListener('pointerup', end, true);
+        document.addEventListener('pointercancel', end, true);
         scrollRaf = requestAnimationFrame(tickScroll);
     }
 
@@ -1924,27 +1938,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function startPointerDrag(item, handle, event) {
-        handle.setPointerCapture?.(event.pointerId);
+        const pointerId = event.pointerId;
         const rect = item.getBoundingClientRect();
-        const offsetY = event.clientY - rect.top;
+        const grabX = event.clientX - rect.left;
+        const grabY = event.clientY - rect.top;
         const placeholder = document.createElement('li');
         placeholder.className = 'todo-placeholder';
         placeholder.style.height = `${rect.height}px`;
         placeholder.setAttribute('aria-hidden', 'true');
 
-        const grabX = event.clientX - rect.left;
-        const grabY = offsetY;
-
-        item.after(placeholder);
-        item.classList.add('dragging');
-        todoList.classList.add('is-sorting');
-        liftDragGhost(item, rect.width);
-        pinDragGhost(item, event.clientX, event.clientY, grabX, grabY);
-
         let lastY = event.clientY;
         let dragging = true;
-        let scrollRaf = 0;
+        let lifted = false;
         let settled = false;
+        let scrollRaf = 0;
 
         const movePlaceholder = (clientY) => {
             const nodes = [...todoList.children].filter((el) => el !== item && el !== placeholder);
@@ -1960,6 +1967,17 @@ document.addEventListener('DOMContentLoaded', () => {
             playListFlip(first, item);
         };
 
+        const lift = () => {
+            if (lifted) return;
+            lifted = true;
+            taskDragActive = true;
+            item.after(placeholder);
+            item.classList.add('dragging');
+            todoList.classList.add('is-sorting');
+            liftDragGhost(item, rect.width);
+            pinDragGhost(item, event.clientX, event.clientY, grabX, grabY);
+        };
+
         const tickScroll = () => {
             if (!dragging) return;
             const box = todoList.getBoundingClientRect();
@@ -1967,7 +1985,7 @@ document.addEventListener('DOMContentLoaded', () => {
             let delta = 0;
             if (lastY < box.top + edge) delta = -Math.max(3, (box.top + edge - lastY) * 0.18);
             else if (lastY > box.bottom - edge) delta = Math.max(3, (lastY - (box.bottom - edge)) * 0.18);
-            if (delta) {
+            if (delta && lifted) {
                 todoList.scrollTop += delta;
                 movePlaceholder(lastY);
             }
@@ -1975,7 +1993,10 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         const onMove = (ev) => {
+            if (ev.pointerId !== pointerId) return;
             lastY = ev.clientY;
+            if (!lifted && Math.hypot(ev.clientX - event.clientX, ev.clientY - event.clientY) < 6) return;
+            lift();
             pinDragGhost(item, ev.clientX, ev.clientY, grabX, grabY);
             movePlaceholder(ev.clientY);
         };
@@ -1985,36 +2006,52 @@ document.addEventListener('DOMContentLoaded', () => {
             settled = true;
             dragging = false;
             cancelAnimationFrame(scrollRaf);
-            handle.releasePointerCapture?.(event.pointerId);
-            handle.removeEventListener('pointermove', onMove);
-            handle.removeEventListener('pointerup', end);
-            handle.removeEventListener('pointercancel', end);
+            document.removeEventListener('pointermove', onMove, true);
+            document.removeEventListener('pointerup', end, true);
+            document.removeEventListener('pointercancel', end, true);
+            try { handle.releasePointerCapture?.(pointerId); } catch { /* ignore */ }
 
-            const dest = placeholder.getBoundingClientRect();
             const drop = () => {
-                item.removeAttribute('style');
-                placeholder.replaceWith(item);
+                [...todoList.children].forEach((el) => {
+                    if (el === placeholder) return;
+                    el.style.transition = '';
+                    el.style.transform = '';
+                });
+                clearTodoMotion(item);
+                if (placeholder.parentNode) placeholder.replaceWith(item);
+                else if (!todoList.contains(item)) todoList.appendChild(item);
+                placeholder.remove();
                 todoList.classList.remove('is-sorting');
-                updateTaskOrder();
+                taskDragActive = false;
+                sweepOrphanTodos();
+                if (lifted) updateTaskOrder();
             };
 
-            item.classList.remove('dragging');
-            if (!canAnimateReorder()) {
+            if (!lifted) {
                 drop();
                 return;
             }
-            item.style.transition = 'top 0.2s cubic-bezier(0.22, 1, 0.36, 1), left 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s ease';
+
+            const dest = placeholder.getBoundingClientRect();
+            if (!canAnimateReorder() || !placeholder.parentNode) {
+                drop();
+                return;
+            }
+            item.style.transition = 'top 0.16s cubic-bezier(0.22, 1, 0.36, 1), left 0.16s cubic-bezier(0.22, 1, 0.36, 1)';
             item.style.transform = 'none';
             item.style.top = `${dest.top}px`;
             item.style.left = `${dest.left}px`;
-            window.setTimeout(drop, 200);
+            window.setTimeout(drop, 160);
         };
 
-        const end = () => finish();
+        const end = (ev) => {
+            if (ev && ev.pointerId !== pointerId) return;
+            finish();
+        };
 
-        handle.addEventListener('pointermove', onMove);
-        handle.addEventListener('pointerup', end);
-        handle.addEventListener('pointercancel', end);
+        document.addEventListener('pointermove', onMove, true);
+        document.addEventListener('pointerup', end, true);
+        document.addEventListener('pointercancel', end, true);
         scrollRaf = requestAnimationFrame(tickScroll);
     }
 
@@ -4138,6 +4175,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         saveState({ skipSync: true });
+        if (taskDragActive) return;
         if (editor?.kind === 'task' || editor?.taskId || editor?.kind === 'composer') {
             renderSidebar();
             renderCalendar();
