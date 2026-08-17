@@ -170,7 +170,7 @@
 
     function syncPrefs() {
         const settings = hooks.getState?.()?.settings || {};
-        const mode = settings.syncMode === 'off' || settings.syncMode === 'push' ? settings.syncMode : 'live';
+        const mode = settings.syncMode === 'off' || settings.syncMode === 'live' ? settings.syncMode : 'push';
         return {
             mode,
             lists: settings.syncLists !== false,
