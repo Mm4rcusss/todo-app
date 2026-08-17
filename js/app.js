@@ -306,6 +306,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentListId: 'default',
         groups: [],
         deletedTaskIds: [],
+        deletedListIds: [],
         currentDate: todayLocal(),
         viewDate: todayLocal(),
         settings: {
@@ -364,6 +365,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!Array.isArray(state.tags)) state.tags = [];
             if (!Array.isArray(state.groups)) state.groups = [];
             if (!Array.isArray(state.deletedTaskIds)) state.deletedTaskIds = [];
+            if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
             if (!state.settings) state.settings = {};
             if (!state.settings.sortBy) state.settings.sortBy = 'custom';
             if (!state.settings.sidebar) state.settings.sidebar = { side: 'left', mode: 'dock' };
@@ -629,6 +631,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         : `Delete list "${list.name}" and all its tasks?`
                 );
                 if (!confirmed) return;
+                if (!Array.isArray(state.deletedListIds)) state.deletedListIds = [];
+                state.deletedListIds.push(list.id);
                 if (leaving) {
                     try { await window.OrbitSync?.leaveList(list.id); } catch { /* still remove locally */ }
                 }
@@ -643,6 +647,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderHeader();
                 renderTodos();
                 refreshCalendarMarkers();
+                window.OrbitSync?.pushNow?.();
             });
         }
         return li;
@@ -2790,8 +2795,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyCloudState(remote) {
         const localPets = state.settings?.pets;
         const localPetChoice = state.settings?.petChoice;
-        state.lists = remote.lists;
-        state.tasks = remote.tasks;
+        const gone = new Set((state.deletedListIds || []).map(String));
+        const goneTasks = new Set((state.deletedTaskIds || []).map(String));
+        state.lists = (remote.lists || []).filter((list) => !gone.has(String(list.id)));
+        state.tasks = (remote.tasks || []).filter((task) => (
+            !gone.has(String(task.listId)) && !goneTasks.has(String(task.id))
+        ));
         state.tags = remote.tags;
         state.groups = remote.groups || [];
         if (remote.settings) {

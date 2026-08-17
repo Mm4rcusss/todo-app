@@ -399,19 +399,23 @@
                 .map((list) => String(list.id))
         );
         const remoteIds = new Set(remoteLists.map((list) => String(list.id)));
+        const deletedLists = new Set((local.deletedListIds || []).map(String));
+        const deleted = new Set((local.deletedTaskIds || []).map(String));
 
         const lists = mergeById(
             (local.lists || []).filter((list) => list.role === 'editor' || ownedIds.has(String(list.id))),
             remoteLists
-        ).filter((list) => remoteIds.has(String(list.id)) || list.role !== 'editor');
+        ).filter((list) => {
+            if (deletedLists.has(String(list.id))) return false;
+            return remoteIds.has(String(list.id)) || list.role !== 'editor';
+        });
 
         const previousSync = lastSyncAt;
         const remoteTaskIds = new Set(remoteTasks.map((task) => String(task.id)));
-        const deleted = new Set((local.deletedTaskIds || []).map(String));
         const listIds = new Set(lists.map((list) => String(list.id)));
         const tasks = mergeById(local.tasks || [], remoteTasks).filter((task) => {
             const id = String(task.id);
-            if (!listIds.has(String(task.listId)) || deleted.has(id)) return false;
+            if (!listIds.has(String(task.listId)) || deleted.has(id) || deletedLists.has(String(task.listId))) return false;
             if (remoteTaskIds.has(id)) return true;
             return !previousSync || stamp(task.updatedAt) >= stamp(previousSync);
         });
@@ -429,7 +433,7 @@
             if (localPets) settings.pets = localPets;
             if (localPetChoice) settings.petChoice = localPetChoice;
             bitsParams = prefs.bits_params && typeof prefs.bits_params === 'object' ? prefs.bits_params : bitsParams;
-            if (prefs.current_list_id) currentListId = prefs.current_list_id;
+            if (prefs.current_list_id && !deletedLists.has(String(prefs.current_list_id))) currentListId = prefs.current_list_id;
         }
 
         const cloudState = { lists, tasks, currentListId };
@@ -522,12 +526,19 @@
             if (error) throw error;
         }
 
-        const { data: remoteOwned } = await sb.from('lists').select('id').eq('owner_id', user.id);
-        const localOwnedIds = new Set(owned.map((list) => String(list.id)));
-        const extraLists = (remoteOwned || []).filter((row) => !localOwnedIds.has(row.id)).map((row) => row.id);
-        if (extraLists.length) {
-            const { error } = await sb.from('lists').delete().in('id', extraLists);
-            if (error) throw error;
+        const removedLists = (state.deletedListIds || []).map(String).filter(Boolean);
+        if (removedLists.length) {
+            const { error: listDeleteError } = await sb.from('lists')
+                .delete()
+                .in('id', removedLists)
+                .eq('owner_id', user.id);
+            if (listDeleteError && !isBlockedWrite(listDeleteError)) throw listDeleteError;
+            for (const id of removedLists) {
+                const { error: leaveError } = await sb.rpc('leave_shared_list', { p_list_id: id });
+                void leaveError;
+            }
+            state.deletedListIds = [];
+            hooks.persistLocal?.();
         }
 
         const { data: remoteGroups } = await sb.from('groups').select('id').eq('user_id', user.id);
