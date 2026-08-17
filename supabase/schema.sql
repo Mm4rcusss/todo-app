@@ -1,4 +1,4 @@
--- Orbit cloud sync. Run this in the Supabase SQL editor once.
+-- Orbit cloud sync. Re-run this whole file in the Supabase SQL editor after updates.
 -- Enable Email (magic link) under Authentication > Providers.
 -- Add redirect URLs for your GitHub Pages origin and local testing.
 
@@ -84,6 +84,9 @@ as $$
     select exists (
         select 1 from public.list_members
         where list_id = _list_id and user_id = auth.uid()
+    ) or exists (
+        select 1 from public.lists
+        where id = _list_id and owner_id = auth.uid()
     );
 $$;
 
@@ -196,7 +199,7 @@ create policy groups_own on public.groups
 
 drop policy if exists lists_select on public.lists;
 create policy lists_select on public.lists
-    for select using (public.is_list_member(id));
+    for select using (owner_id = auth.uid() or public.is_list_member(id));
 
 drop policy if exists lists_insert on public.lists;
 create policy lists_insert on public.lists
@@ -204,7 +207,8 @@ create policy lists_insert on public.lists
 
 drop policy if exists lists_update on public.lists;
 create policy lists_update on public.lists
-    for update using (public.is_list_member(id));
+    for update using (owner_id = auth.uid() or public.is_list_member(id))
+    with check (owner_id = auth.uid() or public.is_list_member(id));
 
 drop policy if exists lists_delete on public.lists;
 create policy lists_delete on public.lists
@@ -216,7 +220,10 @@ create policy members_select on public.list_members
 
 drop policy if exists members_insert on public.list_members;
 create policy members_insert on public.list_members
-    for insert with check (public.is_list_owner(list_id));
+    for insert with check (
+        user_id = auth.uid() and public.is_list_owner(list_id)
+        or public.is_list_owner(list_id)
+    );
 
 drop policy if exists members_delete on public.list_members;
 create policy members_delete on public.list_members
@@ -257,6 +264,26 @@ grant select, insert, update, delete on
     public.user_prefs
 to authenticated;
 grant usage on schema public to authenticated;
+
+do $$
+begin
+    if exists (
+        select 1 from pg_constraint
+        where conrelid = 'public.tags'::regclass and contype = 'p' and array_length(conkey, 1) = 1
+    ) then
+        alter table public.tags drop constraint tags_pkey;
+        alter table public.tags add primary key (user_id, id);
+    end if;
+    if exists (
+        select 1 from pg_constraint
+        where conrelid = 'public.groups'::regclass and contype = 'p' and array_length(conkey, 1) = 1
+    ) then
+        alter table public.groups drop constraint groups_pkey;
+        alter table public.groups add primary key (user_id, id);
+    end if;
+exception when others then
+    null;
+end $$;
 
 do $$
 begin

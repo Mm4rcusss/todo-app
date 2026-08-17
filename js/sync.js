@@ -42,8 +42,17 @@
     function formatError(err) {
         if (!err) return 'Sync failed';
         if (typeof err === 'string') return err;
-        const parts = [err.message, err.details, err.hint].filter(Boolean);
-        return parts.join(' — ') || 'Sync failed';
+        const text = [err.message, err.details, err.hint].filter(Boolean).join(' — ');
+        if (/row-level security/i.test(text)) {
+            return 'Cloud blocked that save. A list id was already taken, so Orbit will retry with a new id.';
+        }
+        return text || 'Sync failed';
+    }
+
+    function isBlockedWrite(err) {
+        const code = String(err?.code || '');
+        const text = `${err?.message || ''} ${err?.details || ''}`;
+        return code === '23505' || code === '42501' || /row-level security|duplicate key/i.test(text);
     }
 
     function mergeKinds(a, b) {
@@ -144,7 +153,7 @@
     function toListRow(list, userId) {
         return {
             id: String(list.id),
-            owner_id: list.ownerId || userId,
+            owner_id: userId,
             group_id: list.groupId || null,
             name: list.name || 'List',
             icon: list.icon || '📋',
@@ -245,13 +254,101 @@
         return true;
     }
 
+    function remapListId(state, oldId, newId) {
+        const from = String(oldId);
+        const to = String(newId);
+        (state.lists || []).forEach((list) => {
+            if (String(list.id) === from) list.id = to;
+        });
+        (state.tasks || []).forEach((task) => {
+            if (String(task.listId) === from) task.listId = to;
+        });
+        if (String(state.currentListId) === from) state.currentListId = to;
+    }
+
+    function ensureDefaultTagIds(state, userId) {
+        if (!state || !userId) return false;
+        const compact = String(userId).replace(/-/g, '');
+        const map = new Map();
+        (state.tags || []).forEach((tag) => {
+            const id = String(tag.id);
+            if (id !== 'urgent' && id !== 'work') return;
+            const next = `tag_${compact}_${id}`;
+            map.set(id, next);
+            tag.id = next;
+            tag.updatedAt = nowIso();
+        });
+        if (!map.size) return false;
+        (state.tasks || []).forEach((task) => {
+            task.tags = (task.tags || []).map((id) => map.get(String(id)) || id);
+        });
+        return true;
+    }
+
+    function ownedLists(state, userId) {
+        return (state.lists || []).filter((list) => (
+            list.role !== 'editor'
+            && (!list.ownerId || String(list.ownerId) === String(userId))
+        ));
+    }
+
+    async function upsertByUser(sb, table, rows) {
+        if (!rows.length) return;
+        let { error } = await sb.from(table).upsert(rows, { onConflict: 'user_id,id' });
+        if (error && /on conflict|there is no unique/i.test(`${error.message} ${error.details || ''}`)) {
+            ({ error } = await sb.from(table).upsert(rows, { onConflict: 'id' }));
+        }
+        return error;
+    }
+
+    async function insertListRow(sb, row) {
+        const { error } = await sb.from('lists').insert(row);
+        return error;
+    }
+
+    async function saveOwnedLists(sb, state, userId) {
+        const owned = ownedLists(state, userId);
+        let remapped = false;
+        for (const list of owned) {
+            const row = toListRow(list, userId);
+            if (String(list.ownerId) === String(userId)) {
+                const { data, error } = await sb.from('lists')
+                    .update(row)
+                    .eq('id', row.id)
+                    .eq('owner_id', userId)
+                    .select('id');
+                if (error && !isBlockedWrite(error)) throw error;
+                if (!error && data?.length) continue;
+            }
+
+            let error = await insertListRow(sb, row);
+            if (!error) {
+                list.ownerId = userId;
+                list.role = 'owner';
+                continue;
+            }
+            if (!isBlockedWrite(error)) throw error;
+
+            const newId = `list_${crypto.randomUUID()}`;
+            remapListId(state, list.id, newId);
+            row.id = newId;
+            error = await insertListRow(sb, row);
+            if (error) throw error;
+            list.ownerId = userId;
+            list.role = 'owner';
+            remapped = true;
+        }
+        if (remapped) hooks.persistLocal?.();
+        return owned;
+    }
+
     async function pull() {
         const sb = await getClient();
         const user = await sessionUser();
         if (!sb || !user || !hooks.getState || !hooks.applyCloud) return;
 
         const local = hooks.getState();
-        if (ensureHomeListId(local, user.id)) hooks.persistLocal?.();
+        if (ensureHomeListId(local, user.id) || ensureDefaultTagIds(local, user.id)) hooks.persistLocal?.();
 
         const [listsRes, membersRes, tasksRes, tagsRes, groupsRes, prefsRes] = await Promise.all([
             sb.from('lists').select('*'),
@@ -337,19 +434,13 @@
         const user = await sessionUser();
         if (!sb || !user || !hooks.getState) return;
         const state = hooks.getState();
-        if (ensureHomeListId(state, user.id)) hooks.persistLocal?.();
+        if (ensureHomeListId(state, user.id) || ensureDefaultTagIds(state, user.id)) hooks.persistLocal?.();
 
-        const owned = (state.lists || []).filter((list) => list.role !== 'editor');
+        const owned = await saveOwnedLists(sb, state, user.id);
         const editable = state.lists || [];
         const editableIds = editable.map((list) => String(list.id));
 
         if (owned.length) {
-            const { error } = await sb.from('lists').upsert(
-                owned.map((list) => toListRow(list, user.id)),
-                { onConflict: 'id' }
-            );
-            if (error) throw error;
-
             const { error: memberError } = await sb.from('list_members').upsert(
                 owned.map((list) => ({
                     list_id: String(list.id),
@@ -358,7 +449,7 @@
                 })),
                 { onConflict: 'list_id,user_id', ignoreDuplicates: true }
             );
-            if (memberError) throw memberError;
+            if (memberError && !isBlockedWrite(memberError)) throw memberError;
         }
 
         const groups = (state.groups || []).map((group, index) => ({
@@ -369,7 +460,27 @@
             updated_at: group.updatedAt || nowIso()
         }));
         if (groups.length) {
-            const { error } = await sb.from('groups').upsert(groups, { onConflict: 'id' });
+            let error = await upsertByUser(sb, 'groups', groups);
+            if (error && isBlockedWrite(error)) {
+                for (const group of state.groups || []) {
+                    const compact = String(user.id).replace(/-/g, '');
+                    if (String(group.id).includes(compact)) continue;
+                    const next = `group_${compact}_${group.id}`.slice(0, 80);
+                    (state.lists || []).forEach((list) => {
+                        if (String(list.groupId) === String(group.id)) list.groupId = next;
+                    });
+                    group.id = next;
+                }
+                hooks.persistLocal?.();
+                const retryGroups = (state.groups || []).map((group, index) => ({
+                    id: String(group.id),
+                    user_id: user.id,
+                    name: group.name || 'Group',
+                    sort: Number.isFinite(Number(group.sort)) ? Number(group.sort) : index,
+                    updated_at: group.updatedAt || nowIso()
+                }));
+                error = await upsertByUser(sb, 'groups', retryGroups);
+            }
             if (error) throw error;
         }
 
@@ -382,10 +493,10 @@
         }
 
         const { data: remoteGroups } = await sb.from('groups').select('id').eq('user_id', user.id);
-        const localGroupIds = new Set(groups.map((group) => group.id));
+        const localGroupIds = new Set((state.groups || []).map((group) => String(group.id)));
         const extraGroups = (remoteGroups || []).filter((row) => !localGroupIds.has(row.id)).map((row) => row.id);
         if (extraGroups.length) {
-            const { error } = await sb.from('groups').delete().in('id', extraGroups);
+            const { error } = await sb.from('groups').delete().eq('user_id', user.id).in('id', extraGroups);
             if (error) throw error;
         }
 
@@ -404,7 +515,19 @@
             });
             if (toUpsert.length) {
                 const { error } = await sb.from('tasks').upsert(toUpsert.map(toTaskRow), { onConflict: 'id' });
-                if (error) throw error;
+                if (error && isBlockedWrite(error)) {
+                    const compact = String(user.id).replace(/-/g, '');
+                    toUpsert.forEach((task) => {
+                        if (!ownedIds.has(String(task.listId))) return;
+                        if (String(task.id).includes(compact)) return;
+                        task.id = `task_${crypto.randomUUID()}`;
+                    });
+                    hooks.persistLocal?.();
+                    const { error: retryError } = await sb.from('tasks').upsert(toUpsert.map(toTaskRow), { onConflict: 'id' });
+                    if (retryError) throw retryError;
+                } else if (error) {
+                    throw error;
+                }
             }
             const localTaskIds = new Set(localTasks.map((task) => String(task.id)));
             const extraOwned = (remoteTasks || [])
@@ -427,14 +550,39 @@
             updated_at: tag.updatedAt || nowIso()
         }));
         if (tags.length) {
-            const { error } = await sb.from('tags').upsert(tags, { onConflict: 'id' });
+            let error = await upsertByUser(sb, 'tags', tags);
+            if (error && isBlockedWrite(error)) {
+                const compact = String(user.id).replace(/-/g, '');
+                const map = new Map();
+                (state.tags || []).forEach((tag) => {
+                    const id = String(tag.id);
+                    if (id.includes(compact)) return;
+                    const next = `tag_${compact}_${id}`.slice(0, 80);
+                    map.set(id, next);
+                    tag.id = next;
+                });
+                if (map.size) {
+                    (state.tasks || []).forEach((task) => {
+                        task.tags = (task.tags || []).map((id) => map.get(String(id)) || id);
+                    });
+                    hooks.persistLocal?.();
+                }
+                const retryTags = (state.tags || []).map((tag) => ({
+                    id: String(tag.id),
+                    user_id: user.id,
+                    name: tag.name || 'Tag',
+                    color: tag.color || '#b19eef',
+                    updated_at: tag.updatedAt || nowIso()
+                }));
+                error = await upsertByUser(sb, 'tags', retryTags);
+            }
             if (error) throw error;
         }
         const { data: remoteTags } = await sb.from('tags').select('id').eq('user_id', user.id);
-        const localTagIds = new Set(tags.map((tag) => tag.id));
+        const localTagIds = new Set((state.tags || []).map((tag) => String(tag.id)));
         const extraTags = (remoteTags || []).filter((row) => !localTagIds.has(row.id)).map((row) => row.id);
         if (extraTags.length) {
-            const { error } = await sb.from('tags').delete().in('id', extraTags);
+            const { error } = await sb.from('tags').delete().eq('user_id', user.id).in('id', extraTags);
             if (error) throw error;
         }
 
