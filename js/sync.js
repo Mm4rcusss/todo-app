@@ -43,16 +43,24 @@
         if (!err) return 'Sync failed';
         if (typeof err === 'string') return err;
         const text = [err.message, err.details, err.hint].filter(Boolean).join(' — ');
+        if (isOnConflictMismatch(err)) return '';
         if (/row-level security/i.test(text)) {
             return 'Cloud blocked that save. A list id was already taken, so Orbit will retry with a new id.';
         }
         return text || 'Sync failed';
     }
 
+    function isOnConflictMismatch(err) {
+        const code = String(err?.code || '');
+        const text = `${err?.message || ''} ${err?.details || ''} ${err?.hint || ''}`;
+        return code === '42P10' || /on conflict|no unique or exclusion constraint/i.test(text);
+    }
+
     function isBlockedWrite(err) {
         const code = String(err?.code || '');
-        const text = `${err?.message || ''} ${err?.details || ''}`;
-        return code === '23505' || code === '42501' || /row-level security|duplicate key/i.test(text);
+        const text = `${err?.message || ''} ${err?.details || ''} ${err?.hint || ''}`;
+        return code === '23505' || code === '42501' || code === '42P10'
+            || /row-level security|duplicate key|on conflict|no unique or exclusion constraint/i.test(text);
     }
 
     function mergeKinds(a, b) {
@@ -294,11 +302,14 @@
 
     async function upsertByUser(sb, table, rows) {
         if (!rows.length) return;
-        let { error } = await sb.from(table).upsert(rows, { onConflict: 'user_id,id' });
-        if (error && /on conflict|there is no unique/i.test(`${error.message} ${error.details || ''}`)) {
-            ({ error } = await sb.from(table).upsert(rows, { onConflict: 'id' }));
+        let lastError = null;
+        for (const onConflict of ['id', 'user_id,id']) {
+            const { error } = await sb.from(table).upsert(rows, { onConflict });
+            if (!error) return;
+            lastError = error;
+            if (!isOnConflictMismatch(error)) return error;
         }
-        return error;
+        return lastError;
     }
 
     async function insertListRow(sb, row) {
@@ -394,8 +405,16 @@
             remoteLists
         ).filter((list) => remoteIds.has(String(list.id)) || list.role !== 'editor');
 
+        const previousSync = lastSyncAt;
+        const remoteTaskIds = new Set(remoteTasks.map((task) => String(task.id)));
+        const deleted = new Set((local.deletedTaskIds || []).map(String));
         const listIds = new Set(lists.map((list) => String(list.id)));
-        const tasks = mergeById(local.tasks || [], remoteTasks).filter((task) => listIds.has(String(task.listId)));
+        const tasks = mergeById(local.tasks || [], remoteTasks).filter((task) => {
+            const id = String(task.id);
+            if (!listIds.has(String(task.listId)) || deleted.has(id)) return false;
+            if (remoteTaskIds.has(id)) return true;
+            return !previousSync || stamp(task.updatedAt) >= stamp(previousSync);
+        });
         const tags = mergeById(local.tags || [], remoteTags);
         const groups = mergeById(local.groups || [], remoteGroups);
 
@@ -440,6 +459,14 @@
         const editable = state.lists || [];
         const editableIds = editable.map((list) => String(list.id));
 
+        const deletedIds = (state.deletedTaskIds || []).map(String).filter(Boolean);
+        if (deletedIds.length) {
+            const { error: deleteError } = await sb.from('tasks').delete().in('id', deletedIds);
+            if (deleteError && !isBlockedWrite(deleteError)) throw deleteError;
+            state.deletedTaskIds = [];
+            hooks.persistLocal?.();
+        }
+
         if (owned.length) {
             const { error: memberError } = await sb.from('list_members').upsert(
                 owned.map((list) => ({
@@ -449,7 +476,18 @@
                 })),
                 { onConflict: 'list_id,user_id', ignoreDuplicates: true }
             );
-            if (memberError && !isBlockedWrite(memberError)) throw memberError;
+            if (memberError && isOnConflictMismatch(memberError)) {
+                for (const list of owned) {
+                    const { error: insertMember } = await sb.from('list_members').insert({
+                        list_id: String(list.id),
+                        user_id: user.id,
+                        role: 'owner'
+                    });
+                    if (insertMember && !isBlockedWrite(insertMember)) throw insertMember;
+                }
+            } else if (memberError && !isBlockedWrite(memberError)) {
+                throw memberError;
+            }
         }
 
         const groups = (state.groups || []).map((group, index) => ({
@@ -528,14 +566,6 @@
                 } else if (error) {
                     throw error;
                 }
-            }
-            const localTaskIds = new Set(localTasks.map((task) => String(task.id)));
-            const extraOwned = (remoteTasks || [])
-                .filter((row) => ownedIds.has(String(row.list_id)) && !localTaskIds.has(String(row.id)))
-                .map((row) => row.id);
-            if (extraOwned.length) {
-                const { error } = await sb.from('tasks').delete().in('id', extraOwned);
-                if (error) throw error;
             }
         } else if (localTasks.length) {
             const { error } = await sb.from('tasks').upsert(localTasks.map(toTaskRow), { onConflict: 'id' });
@@ -618,6 +648,7 @@
             }
         } catch (err) {
             lastError = formatError(err);
+            if (!lastError) lastError = '';
             console.warn('Orbit sync', err);
         } finally {
             busy = false;
@@ -656,7 +687,7 @@
             .subscribe();
         pollTimer = global.setInterval(() => {
             if (!document.hidden) schedulePull();
-        }, 5000);
+        }, 3000);
     }
 
     function schedulePush() {

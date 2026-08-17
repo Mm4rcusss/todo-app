@@ -306,6 +306,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ],
         currentListId: 'default',
         groups: [],
+        deletedTaskIds: [],
         currentDate: todayLocal(),
         viewDate: todayLocal(),
         settings: {
@@ -361,6 +362,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!Array.isArray(state.tasks)) state.tasks = [];
             if (!Array.isArray(state.tags)) state.tags = [];
             if (!Array.isArray(state.groups)) state.groups = [];
+            if (!Array.isArray(state.deletedTaskIds)) state.deletedTaskIds = [];
             if (!state.settings) state.settings = {};
             if (!state.settings.sortBy) state.settings.sortBy = 'custom';
             if (!state.settings.sidebar) state.settings.sidebar = { side: 'left', mode: 'dock' };
@@ -581,6 +583,8 @@ document.addEventListener('DOMContentLoaded', () => {
         listTitle.append(titleInput, sortBtn);
 
         currentDateEl.textContent = resetLabel(list) || parseLocalDate(state.currentDate).toLocaleDateString('en-US', DATE_FORMAT);
+        const inviteBtn = document.getElementById('header-invite-btn');
+        if (inviteBtn) inviteBtn.hidden = document.getElementById('cloud-actions')?.hidden || list?.role === 'editor';
     }
 
     function renderListRow(list, inGroup) {
@@ -912,11 +916,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const index = state.tasks.findIndex((task) => sameId(task.id, todo.id));
         if (index === -1) return;
         const [removed] = state.tasks.splice(index, 1);
+        if (!Array.isArray(state.deletedTaskIds)) state.deletedTaskIds = [];
+        state.deletedTaskIds.push(removed.id);
         saveState();
         renderTodos();
         refreshCalendarMarkers();
         showUndo('Task deleted', () => {
             state.tasks.splice(index, 0, removed);
+            state.deletedTaskIds = (state.deletedTaskIds || []).filter((id) => !sameId(id, removed.id));
             saveState();
             renderTodos();
             refreshCalendarMarkers();
@@ -2780,10 +2787,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const configured = Boolean(window.OrbitSync?.isConfigured());
         if (hint) {
             hint.textContent = configured
-                ? 'Optional. Sign in to sync lists across devices and share a list with someone.'
+                ? 'Sign in to sync. Invite is under the list name, or open a list’s ⚙️ and copy the invite link.'
                 : 'Cloud sync is not configured. Add your Supabase URL and anon key in js/supabase-config.js.';
         }
         const user = configured ? await window.OrbitSync.user() : null;
+        const cloudActions = document.getElementById('cloud-actions');
+        if (cloudActions) cloudActions.hidden = !user;
+        const inviteBtn = document.getElementById('header-invite-btn');
+        if (inviteBtn) inviteBtn.hidden = !user || currentList()?.role === 'editor';
         if (signedOut) signedOut.hidden = !configured || Boolean(user);
         if (signedIn) signedIn.hidden = !user;
         if (emailLabel) emailLabel.textContent = user?.email || '';
@@ -3016,27 +3027,45 @@ document.addEventListener('DOMContentLoaded', () => {
             await window.OrbitSync?.syncNow?.();
             refreshAccountUi();
         });
-        document.getElementById('account-signout-btn')?.addEventListener('click', async () => {
-            await window.OrbitSync?.signOut();
+        const syncNow = async () => {
+            const btn = document.getElementById('header-sync-btn');
+            if (btn) btn.textContent = 'Syncing…';
+            await window.OrbitSync?.syncNow?.();
+            if (btn) btn.textContent = 'Sync';
             refreshAccountUi();
-        });
-        document.getElementById('share-list-btn')?.addEventListener('click', async () => {
-            const status = document.getElementById('share-list-status');
+            showNotice('Synced.');
+        };
+        document.getElementById('header-sync-btn')?.addEventListener('click', syncNow);
+        const copyInvite = async (listId, status) => {
             try {
                 if (status) {
                     status.hidden = false;
                     status.textContent = 'Preparing invite…';
                 }
-                const link = await window.OrbitSync.createInvite(settingsListId);
+                const link = await window.OrbitSync.createInvite(listId);
                 try {
                     await navigator.clipboard.writeText(link);
                     if (status) { status.hidden = false; status.textContent = 'Invite copied. Send it — they sign in and the list stays in sync.'; }
+                    else showNotice('Invite copied. Send that link.');
                 } catch {
                     if (status) { status.hidden = false; status.textContent = link; }
+                    else showNotice(link);
                 }
             } catch (err) {
-                if (status) { status.hidden = false; status.textContent = err.message || 'Could not create an invite.'; }
+                const message = err.message || 'Could not create an invite.';
+                if (status) { status.hidden = false; status.textContent = message; }
+                else showNotice(message);
             }
+        };
+        document.getElementById('header-invite-btn')?.addEventListener('click', () => {
+            copyInvite(state.currentListId);
+        });
+        document.getElementById('account-signout-btn')?.addEventListener('click', async () => {
+            await window.OrbitSync?.signOut();
+            refreshAccountUi();
+        });
+        document.getElementById('share-list-btn')?.addEventListener('click', async () => {
+            await copyInvite(settingsListId, document.getElementById('share-list-status'));
         });
 
         document.getElementById('save-tag-btn').addEventListener('click', saveNewTag);

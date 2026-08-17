@@ -386,6 +386,32 @@ header {
     flex-wrap: wrap;
     align-items: center;
     justify-content: center;
+    gap: 0.45rem 0.75rem;
+}
+
+.cloud-actions {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.cloud-action-btn {
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    border-radius: 999px;
+    padding: 0.28rem 0.8rem;
+    font: inherit;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.cloud-action-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.cloud-actions[hidden],
+.cloud-action-btn[hidden] {
+    display: none !important;
 }
 
 #current-date {

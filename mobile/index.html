@@ -69,6 +69,10 @@
                     <h1 id="list-title">My Tasks</h1>
                     <div class="header-meta">
                         <p class="subtitle" id="current-date">Today</p>
+                        <div class="cloud-actions" id="cloud-actions" hidden>
+                            <button type="button" id="header-sync-btn" class="cloud-action-btn">Sync</button>
+                            <button type="button" id="header-invite-btn" class="cloud-action-btn">Invite</button>
+                        </div>
                     </div>
                 </div>
             </header>
@@ -260,7 +264,7 @@
             </div>
             <div class="setting-group" id="share-list-group">
                 <label>Share this list</label>
-                <p class="setting-hint">Copy the link and send it. They sign in with their own account, then this list stays in sync for both of you.</p>
+                <p class="setting-hint">Copy the invite link, or tap Invite under the list name. They sign in with their own account, then this list stays in sync for both of you.</p>
                 <button type="button" id="share-list-btn" class="settings-link">Copy invite link</button>
                 <p id="share-list-status" class="theme-upload-status" hidden></p>
             </div>
