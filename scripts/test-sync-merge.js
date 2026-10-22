@@ -47,7 +47,7 @@ function pullTasks({ live, remote, tombs, idsAtStart }) {
     });
 }
 
-function pullLists({ live, remote, tombs, idsAtStart, knownIds, localOnlyIds }) {
+function pullLists({ live, remote, tombs, idsAtStart, localOnlyIds, serverDeletedIds }) {
     const deletedLists = new Set([...(tombs || [])].map(String));
     const remoteLists = (remote || []).filter((list) => !listIsDeleted(list.id, deletedLists));
     const liveIds = new Set((live || []).map((list) => String(list.id)));
@@ -58,12 +58,12 @@ function pullLists({ live, remote, tombs, idsAtStart, knownIds, localOnlyIds }) 
         idsAtStart: start,
         liveIds,
         remoteIds,
-        knownIds: new Set([...(knownIds || [])].map(String)),
-        localOnlyIds: new Set([...(localOnlyIds || [])].map(String))
+        localOnlyIds: new Set([...(localOnlyIds || [])].map(String)),
+        serverDeletedIds: new Set([...(serverDeletedIds || [])].map(String))
     });
 }
 
-function pullGroups({ live, remote, tombs, idsAtStart, knownIds }) {
+function pullGroups({ live, remote, tombs, idsAtStart, serverDeletedIds }) {
     const deletedGroups = new Set([...(tombs || [])].map(String));
     const remoteGroups = (remote || []).filter((group) => !groupIsDeleted(group.id, deletedGroups));
     const liveIds = new Set((live || []).map((group) => String(group.id)));
@@ -74,7 +74,7 @@ function pullGroups({ live, remote, tombs, idsAtStart, knownIds }) {
         idsAtStart: start,
         liveIds,
         remoteIds,
-        knownIds: new Set([...(knownIds || [])].map(String))
+        serverDeletedIds: new Set([...(serverDeletedIds || [])].map(String))
     });
 }
 
@@ -220,22 +220,40 @@ const restoredGroups = pullGroups({
 assert('restore: group can come back after forgetDeletedGroup', ids(restoredGroups) === 'group-a');
 
 assert(
-    'list: known-but-missing id never comes back even without a tombstone',
+    'list: server row returns even if it was previously known locally',
     ids(pullLists({
         live: [{ id: 'keep' }],
-        remote: [{ id: 'keep' }, { id: 'gone' }],
+        remote: [{ id: 'keep' }, { id: 'was-known' }],
+        tombs: []
+    })) === 'keep,was-known'
+);
+
+assert(
+    'group: server row returns even if it was previously known locally',
+    ids(pullGroups({
+        live: [{ id: 'keep' }],
+        remote: [{ id: 'keep' }, { id: 'was-known-group' }],
+        tombs: []
+    })) === 'keep,was-known-group'
+);
+
+assert(
+    'list: server soft-delete drops the row',
+    ids(pullLists({
+        live: [{ id: 'keep' }, { id: 'gone' }],
+        remote: [{ id: 'keep' }],
         tombs: [],
-        knownIds: ['keep', 'gone']
+        serverDeletedIds: ['gone']
     })) === 'keep'
 );
 
 assert(
-    'group: known-but-missing id never comes back even without a tombstone',
+    'group: server soft-delete drops the row',
     ids(pullGroups({
-        live: [{ id: 'keep' }],
-        remote: [{ id: 'keep' }, { id: 'gone-group' }],
+        live: [{ id: 'keep' }, { id: 'gone-group' }],
+        remote: [{ id: 'keep' }],
         tombs: [],
-        knownIds: ['keep', 'gone-group']
+        serverDeletedIds: ['gone-group']
     })) === 'keep'
 );
 

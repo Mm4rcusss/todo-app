@@ -105,7 +105,7 @@
                         <p class="subtitle" id="current-date">Today</p>
                         <div class="cloud-actions" id="cloud-actions" hidden>
                             <button type="button" id="header-sync-btn" class="cloud-action-btn">Sync</button>
-                            <button type="button" id="header-invite-btn" class="cloud-action-btn">Invite</button>
+                            <button type="button" id="header-invite-btn" class="cloud-action-btn" hidden>Invite</button>
                         </div>
                     </div>
                 </div>
@@ -216,7 +216,7 @@
     <div id="account-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
         <div class="modal-content">
             <h3 id="account-modal-title">Account</h3>
-            <p class="setting-hint" id="account-hint">Sign in to sync across devices and share a list. If you already created an account, tap Log in — creating it again sends another email.</p>
+            <p class="setting-hint" id="account-hint">Sign in to sync across devices. Guest data on this device is wiped when you log in (it is not merged into the cloud). If you already created an account, tap Log in — creating it again sends another email.</p>
             <div id="account-signed-out">
                 <div class="setting-group">
                     <label for="account-email">Email</label>
@@ -276,10 +276,10 @@
                     <strong>History</strong>
                     <span>Restore recently deleted lists or groups</span>
                 </button>
-                <a class="settings-nav-btn" href="./mobile/">
-                    <strong>Switch to phone view</strong>
-                    <span>Same lists, laid out for iPhone</span>
-                </a>
+                <button type="button" class="settings-nav-btn" data-settings-panel="install">
+                    <strong>Install app</strong>
+                    <span>Add Orbit to your home screen (PWA)</span>
+                </button>
             </div>
             <div id="settings-panel-sync" class="settings-panel" hidden>
                 <button type="button" class="settings-back-btn">← All settings</button>
@@ -290,7 +290,10 @@
                         <button type="button" data-sync-mode="push">Upload only</button>
                         <button type="button" data-sync-mode="live">Live</button>
                     </div>
-                    <p class="setting-hint" id="sync-mode-hint">Upload only sends your changes and will not pull lists back every few seconds.</p>
+                    <p class="setting-hint" id="sync-mode-hint">Signed-in accounts use Live by default so phone and computer stay in sync.</p>
+                </div>
+                <div class="setting-group">
+                    <p class="setting-hint">List sharing is paused until personal sync is solid. Your own lists still sync across your devices.</p>
                 </div>
                 <div class="setting-group" id="sync-what-group">
                     <label>What to upload</label>
@@ -424,6 +427,16 @@
                     <button type="button" id="empty-history-btn" class="settings-link" hidden>Empty history</button>
                 </div>
             </div>
+            <div id="settings-panel-install" class="settings-panel" hidden>
+                <button type="button" class="settings-back-btn">← All settings</button>
+                <div class="setting-group">
+                    <label>Add Orbit to your home screen</label>
+                    <p class="setting-hint">Use this same URL on phone and computer. Sign in, keep Sync on Live, then install:</p>
+                    <p class="setting-hint"><strong>iPhone / iPad:</strong> Safari → Share → Add to Home Screen.</p>
+                    <p class="setting-hint"><strong>Android:</strong> Chrome menu → Install app / Add to Home screen.</p>
+                    <p class="setting-hint"><strong>Laptop:</strong> Chrome or Edge address bar install icon, or menu → Install Orbit.</p>
+                </div>
+            </div>
             <button type="button" id="close-prefs-modal" class="btn-primary">Done</button>
         </div>
     </div>
@@ -438,10 +451,10 @@
                     <option value="">No group</option>
                 </select>
             </div>
-            <div class="setting-group" id="share-list-group">
+            <div class="setting-group" id="share-list-group" hidden>
                 <label>Share this list</label>
-                <p class="setting-hint">Copy the invite link, or tap Invite under the list name. They sign in with their own account, then this list stays in sync for both of you.</p>
-                <button type="button" id="share-list-btn" class="settings-link">Copy invite link</button>
+                <p class="setting-hint">List sharing is paused while personal sync is being fixed.</p>
+                <button type="button" id="share-list-btn" class="settings-link" disabled>Copy invite link</button>
                 <p id="share-list-status" class="theme-upload-status" hidden></p>
             </div>
             <div class="setting-group" id="list-sync-group">

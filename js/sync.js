@@ -17,10 +17,16 @@
     const TASK_TOMBSTONE_KEY = 'orbit_deleted_tasks';
     const KNOWN_LISTS_KEY = 'orbit_known_lists';
     const KNOWN_GROUPS_KEY = 'orbit_known_groups';
+    const INVITE_KEY = 'orbit_invite_token';
+    const SYNC_MIGRATION_KEY = 'orbit_sync_migration';
+    const SYNC_MIGRATION_VERSION = 2;
+    const USER_CACHE_DB = 'orbit_user_cache';
+    const USER_CACHE_STORE = 'snapshots';
     const sessionListTombs = new Set();
     const sessionGroupTombs = new Set();
     const sessionTaskTombs = new Set();
     let pullBlocked = false;
+    let cachedUserId = null;
 
     function loadStoredIds(key) {
         try {
@@ -68,7 +74,6 @@
     function rememberDeleted(id) {
         const extras = [String(id)];
         if (isHomeListId(id)) extras.push('default');
-        rememberKnown('list', extras);
         return rememberIds(TOMBSTONE_KEY, sessionListTombs, extras, 'deletedListIds');
     }
 
@@ -79,7 +84,6 @@
     }
 
     function rememberDeletedGroup(id) {
-        rememberKnown('group', [String(id)]);
         return rememberIds(GROUP_TOMBSTONE_KEY, sessionGroupTombs, [String(id)], 'deletedGroupIds');
     }
 
@@ -199,13 +203,37 @@
         pullBlocked = true;
         const list = (Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean);
         if (kind === 'task') rememberDeletedTask(list);
-        else if (kind === 'group') rememberKnown('group', list);
-        else rememberKnown('list', list);
+        else if (kind === 'group') list.forEach((id) => rememberDeletedGroup(id));
+        else list.forEach((id) => rememberDeleted(id));
+    }
+
+    function runLocalMigration() {
+        let ver = 0;
+        try { ver = Number(localStorage.getItem(SYNC_MIGRATION_KEY) || 0) || 0; } catch { ver = 0; }
+        if (ver >= SYNC_MIGRATION_VERSION) return false;
+        try {
+            localStorage.removeItem(KNOWN_LISTS_KEY);
+            localStorage.removeItem(KNOWN_GROUPS_KEY);
+            localStorage.removeItem(TOMBSTONE_KEY);
+            localStorage.removeItem(GROUP_TOMBSTONE_KEY);
+            localStorage.removeItem(TASK_TOMBSTONE_KEY);
+            localStorage.setItem(SYNC_MIGRATION_KEY, String(SYNC_MIGRATION_VERSION));
+        } catch { /* ignore */ }
+        sessionListTombs.clear();
+        sessionGroupTombs.clear();
+        sessionTaskTombs.clear();
+        const state = hooks.getState?.();
+        if (state) {
+            state.deletedListIds = [];
+            state.deletedGroupIds = [];
+            state.deletedTaskIds = [];
+        }
+        return true;
     }
 
     function syncPrefs() {
         const settings = hooks.getState?.()?.settings || {};
-        const mode = settings.syncMode === 'off' || settings.syncMode === 'live' ? settings.syncMode : 'push';
+        const mode = settings.syncMode === 'off' || settings.syncMode === 'push' ? settings.syncMode : 'live';
         return {
             mode,
             lists: settings.syncLists !== false,
@@ -217,36 +245,34 @@
         return list?.sync === false;
     }
 
-    function filterPulledLists(merged, { tombs, idsAtStart, liveIds, remoteIds, knownIds, localOnlyIds }) {
+    function filterPulledLists(merged, { tombs, idsAtStart, liveIds, remoteIds, localOnlyIds, serverDeletedIds }) {
         return (merged || []).filter((list) => {
             const id = String(list.id);
-            if (listIsDeleted(id, tombs)) return false;
+            if (serverDeletedIds?.has(id) || listIsDeleted(id, tombs)) return false;
             if (localOnlyIds?.has(id)) return liveIds.has(id);
             if (idsAtStart.has(id) && !liveIds.has(id)) return false;
-            if (knownIds?.has(id) && !liveIds.has(id)) return false;
-            if (remoteIds.has(id)) return !listIsDeleted(id, tombs);
+            if (remoteIds.has(id)) return true;
             if (list.role === 'editor') return false;
             return !list.ownerId;
         });
     }
 
-    function filterPulledGroups(merged, { tombs, idsAtStart, liveIds, remoteIds, knownIds }) {
+    function filterPulledGroups(merged, { tombs, idsAtStart, liveIds, remoteIds, serverDeletedIds }) {
         return (merged || []).filter((group) => {
             const id = String(group.id);
-            if (groupIsDeleted(id, tombs)) return false;
+            if (serverDeletedIds?.has(id) || groupIsDeleted(id, tombs)) return false;
             if (idsAtStart.has(id) && !liveIds.has(id)) return false;
-            if (knownIds?.has(id) && !liveIds.has(id)) return false;
-            if (remoteIds.has(id)) return !groupIsDeleted(id, tombs);
+            if (remoteIds.has(id)) return true;
             return liveIds.has(id);
         });
     }
 
-    function filterPulledTasks(merged, { tombs, idsAtStart, liveIds, remoteIds }) {
+    function filterPulledTasks(merged, { tombs, idsAtStart, liveIds, remoteIds, serverDeletedIds }) {
         return (merged || []).filter((task) => {
             const id = String(task.id);
-            if (taskIsDeleted(id, tombs)) return false;
+            if (serverDeletedIds?.has(id) || taskIsDeleted(id, tombs)) return false;
             if (idsAtStart.has(id) && !liveIds.has(id)) return false;
-            if (remoteIds.has(id)) return !taskIsDeleted(id, tombs);
+            if (remoteIds.has(id)) return true;
             return liveIds.has(id);
         });
     }
@@ -276,6 +302,55 @@
 
     function newer(a, b) {
         return stamp(a?.updatedAt) >= stamp(b?.updatedAt) ? a : b;
+    }
+
+    function rowDeletedAt(row) {
+        return row?.deleted_at || row?.deletedAt || null;
+    }
+
+    function isSoftDeleted(row) {
+        return Boolean(rowDeletedAt(row));
+    }
+
+    function mergeTaskFields(local, remote) {
+        if (!local) return remote;
+        if (!remote) return local;
+        const localStamp = stamp(local.updatedAt);
+        const remoteStamp = stamp(remote.updatedAt);
+        if (remoteStamp > localStamp) {
+            return {
+                ...local,
+                ...remote,
+                text: remote.text,
+                completed: remote.completed,
+                date: remote.date,
+                tags: remote.tags,
+                order: remote.order,
+                updatedAt: remote.updatedAt
+            };
+        }
+        if (localStamp > remoteStamp) {
+            return {
+                ...remote,
+                ...local,
+                text: local.text,
+                completed: local.completed,
+                date: local.date,
+                tags: local.tags,
+                order: local.order,
+                updatedAt: local.updatedAt
+            };
+        }
+        return {
+            ...local,
+            text: local.text,
+            completed: local.completed,
+            date: local.date || remote.date,
+            tags: Array.isArray(local.tags) && local.tags.length ? local.tags : remote.tags,
+            order: local.order,
+            listId: local.listId || remote.listId,
+            updatedAt: local.updatedAt || remote.updatedAt
+        };
     }
 
     function formatError(err) {
@@ -342,6 +417,7 @@
     const WALLPAPER_MAX = 8;
     const WALLPAPER_BYTES = 10 * 1024 * 1024;
     const MEDIA_BUCKET = 'orbit-media';
+    const WALLPAPER_FILE_LIMIT = WALLPAPER_BYTES;
 
     function wallpaperQuota(themes, extraBytes = 0, extraCount = 0) {
         const items = themes || [];
@@ -408,12 +484,21 @@
         const user = await sessionUser();
         if (!sb || !user || !blob) return;
         if (syncPrefs().mode === 'off') return;
+        if (blob.size > WALLPAPER_FILE_LIMIT) {
+            const err = new Error(`Wallpaper is too large (max ${Math.round(WALLPAPER_FILE_LIMIT / (1024 * 1024))} MB).`);
+            hooks.onWallpaperError?.(err.message);
+            throw err;
+        }
         const { error } = await sb.storage.from(MEDIA_BUCKET).upload(
             wallpaperObjectPath(user.id, id),
             blob,
             { upsert: true, contentType: blob.type || 'image/jpeg', cacheControl: '3600' }
         );
-        if (error) throw error;
+        if (error) {
+            const message = formatError(error) || 'Wallpaper upload failed.';
+            hooks.onWallpaperError?.(message);
+            throw error;
+        }
     }
 
     async function deleteWallpaperFile(id) {
@@ -454,6 +539,7 @@
                 await uploadWallpaperFile(id, dataUrlToBlob(dataUrl));
             } catch (err) {
                 console.warn('Orbit wallpaper upload', err);
+                hooks.onWallpaperError?.(formatError(err) || 'Wallpaper upload failed.');
             }
         }
     }
@@ -604,7 +690,7 @@
         return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
     }
 
-    function toListRow(list, userId) {
+    function toListRow(list, userId, deletedAt = null) {
         return {
             id: String(list.id),
             owner_id: userId,
@@ -615,6 +701,7 @@
             color: list.color || '#b19eef',
             reset_frequency: list.resetFrequency || 'none',
             reset: list.reset && typeof list.reset === 'object' ? list.reset : { type: 'none' },
+            deleted_at: deletedAt,
             updated_at: list.updatedAt || nowIso()
         };
     }
@@ -632,11 +719,12 @@
             ownerId: row.owner_id,
             role: role || (row.owner_id ? 'owner' : 'editor'),
             shared: role === 'editor',
+            deletedAt: rowDeletedAt(row),
             updatedAt: row.updated_at
         };
     }
 
-    function toTaskRow(task) {
+    function toTaskRow(task, deletedAt = null) {
         return {
             id: String(task.id),
             list_id: String(task.listId),
@@ -645,6 +733,7 @@
             date: task.date || null,
             tags: Array.isArray(task.tags) ? task.tags : [],
             sort_order: Number.isFinite(Number(task.order)) ? Number(task.order) : 0,
+            deleted_at: deletedAt,
             updated_at: task.updatedAt || nowIso()
         };
     }
@@ -658,11 +747,33 @@
             date: row.date || '',
             tags: Array.isArray(row.tags) ? row.tags : [],
             order: Number(row.sort_order) || 0,
+            deletedAt: rowDeletedAt(row),
             updatedAt: row.updated_at
         };
     }
 
-    function mergeById(localItems, remoteItems) {
+    function toGroupRow(group, userId, index, deletedAt = null) {
+        return {
+            id: String(group.id),
+            user_id: userId,
+            name: group.name || 'Group',
+            sort: Number.isFinite(Number(group.sort)) ? Number(group.sort) : index,
+            deleted_at: deletedAt,
+            updated_at: group.updatedAt || nowIso()
+        };
+    }
+
+    function fromGroupRow(row) {
+        return {
+            id: row.id,
+            name: row.name,
+            sort: Number(row.sort) || 0,
+            deletedAt: rowDeletedAt(row),
+            updatedAt: row.updated_at
+        };
+    }
+
+    function mergeById(localItems, remoteItems, mergeFn) {
         const map = new Map();
         (localItems || []).forEach((item) => {
             if (item?.id) map.set(String(item.id), item);
@@ -670,7 +781,11 @@
         (remoteItems || []).forEach((item) => {
             const id = String(item.id);
             const current = map.get(id);
-            map.set(id, current ? newer(item, current) : item);
+            if (!current) {
+                map.set(id, item);
+                return;
+            }
+            map.set(id, mergeFn ? mergeFn(current, item) : newer(item, current));
         });
         return [...map.values()];
     }
@@ -760,15 +875,9 @@
     }
 
     async function upsertByUser(sb, table, rows) {
-        if (!rows.length) return;
-        let lastError = null;
-        for (const onConflict of ['id', 'user_id,id']) {
-            const { error } = await sb.from(table).upsert(rows, { onConflict });
-            if (!error) return;
-            lastError = error;
-            if (!isOnConflictMismatch(error)) return error;
-        }
-        return lastError;
+        if (!rows.length) return null;
+        const { error } = await sb.from(table).upsert(rows, { onConflict: 'user_id,id' });
+        return error || null;
     }
 
     async function insertListRow(sb, row) {
@@ -778,10 +887,9 @@
 
     async function saveOwnedLists(sb, state, userId) {
         const saved = [];
-        let remapped = false;
         for (const list of ownedLists(state, userId)) {
             if (listIsDeleted(list.id, expandTombs(state, userId))) continue;
-            const row = toListRow(list, userId);
+            const row = toListRow(list, userId, null);
             if (String(list.ownerId) === String(userId)) {
                 const { data, error } = await sb.from('lists')
                     .update(row)
@@ -795,7 +903,7 @@
                 }
             }
 
-            let error = await insertListRow(sb, row);
+            const error = await insertListRow(sb, row);
             if (!error) {
                 list.ownerId = userId;
                 list.role = 'owner';
@@ -803,42 +911,205 @@
                 continue;
             }
             if (!isBlockedWrite(error)) throw error;
-
-            const newId = `list_${crypto.randomUUID()}`;
-            remapListId(state, list.id, newId);
-            row.id = newId;
-            error = await insertListRow(sb, row);
-            if (error) throw error;
-            list.ownerId = userId;
-            list.role = 'owner';
-            remapped = true;
-            saved.push(list);
+            throw new Error('Could not save that list id to the cloud. Try again or create a new list.');
         }
-        if (remapped) hooks.persistLocal?.();
         return saved;
     }
 
-    async function deleteTombstonedGroups(sb, state, userId) {
-        const removedGroups = [...expandGroupTombs(state)];
+    async function softDeleteTombstonedGroups(sb, state, userId) {
+        const removedGroups = [...expandGroupTombs(state)].filter((id) => id && id !== 'default');
         if (!removedGroups.length) return;
-        const { error } = await sb.from('groups')
-            .delete()
-            .eq('user_id', userId)
-            .in('id', removedGroups);
+        const stampNow = nowIso();
+        const rows = removedGroups.map((id, index) => ({
+            id: String(id),
+            user_id: userId,
+            name: 'Deleted',
+            sort: index,
+            deleted_at: stampNow,
+            updated_at: stampNow
+        }));
+        const error = await upsertByUser(sb, 'groups', rows);
         if (error && !isBlockedWrite(error)) throw error;
     }
 
-    async function deleteTombstonedLists(sb, state, userId) {
+    async function softDeleteTombstonedLists(sb, state, userId) {
         const removedLists = [...expandTombs(state, userId)];
         if (!removedLists.length) return;
-        const { error: listDeleteError } = await sb.from('lists')
-            .delete()
-            .in('id', removedLists);
-        if (listDeleteError && !isBlockedWrite(listDeleteError)) throw listDeleteError;
+        const stampNow = nowIso();
         for (const id of removedLists) {
+            if (id === 'default') continue;
+            const { error: updateError } = await sb.from('lists')
+                .update({ deleted_at: stampNow, updated_at: stampNow })
+                .eq('id', id)
+                .eq('owner_id', userId);
+            if (updateError && !isBlockedWrite(updateError)) throw updateError;
             const { error: leaveError } = await sb.rpc('leave_shared_list', { p_list_id: id });
             void leaveError;
         }
+    }
+
+    async function softDeleteTombstonedTasks(sb, state) {
+        const deletedIds = [...taskTombstoneSet(state)];
+        if (!deletedIds.length) return;
+        const stampNow = nowIso();
+        const { error } = await sb.from('tasks')
+            .update({ deleted_at: stampNow, updated_at: stampNow })
+            .in('id', deletedIds);
+        if (error && !isBlockedWrite(error)) throw error;
+    }
+
+    function openUserCacheDb() {
+        return new Promise((resolve, reject) => {
+            if (!global.indexedDB) {
+                resolve(null);
+                return;
+            }
+            const req = indexedDB.open(USER_CACHE_DB, 1);
+            req.onupgradeneeded = () => {
+                const db = req.result;
+                if (!db.objectStoreNames.contains(USER_CACHE_STORE)) {
+                    db.createObjectStore(USER_CACHE_STORE);
+                }
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error || new Error('Could not open user cache.'));
+        });
+    }
+
+    async function saveUserCache(userId, snapshot) {
+        if (!userId || !snapshot) return;
+        try {
+            const db = await openUserCacheDb();
+            if (!db) return;
+            const payload = {
+                lists: snapshot.lists || [],
+                tasks: snapshot.tasks || [],
+                tags: snapshot.tags || [],
+                groups: snapshot.groups || [],
+                settings: snapshot.settings || {},
+                bitsParams: snapshot.bitsParams || {},
+                customThemes: snapshot.customThemes || [],
+                wallpaperAdjust: snapshot.wallpaperAdjust || {},
+                currentListId: snapshot.currentListId || '',
+                savedAt: nowIso()
+            };
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction(USER_CACHE_STORE, 'readwrite');
+                tx.objectStore(USER_CACHE_STORE).put(payload, String(userId));
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+            db.close?.();
+        } catch (err) {
+            console.warn('Orbit user cache save', err);
+        }
+    }
+
+    async function loadUserCache(userId) {
+        if (!userId) return null;
+        try {
+            const db = await openUserCacheDb();
+            if (!db) return null;
+            const row = await new Promise((resolve, reject) => {
+                const tx = db.transaction(USER_CACHE_STORE, 'readonly');
+                const req = tx.objectStore(USER_CACHE_STORE).get(String(userId));
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => reject(req.error);
+            });
+            db.close?.();
+            return row;
+        } catch (err) {
+            console.warn('Orbit user cache load', err);
+            return null;
+        }
+    }
+
+    async function paintFromUserCache(userId) {
+        const cached = await loadUserCache(userId);
+        if (!cached || !hooks.applyCloud) return false;
+        hooks.applyCloud(cached);
+        return true;
+    }
+
+    function applyIncrementalChange(table, payload) {
+        const state = hooks.getState?.();
+        if (!state || !hooks.applyCloud || editingNow()) {
+            schedulePull();
+            return;
+        }
+        const event = payload?.eventType || payload?.event;
+        const row = payload?.new || payload?.record || null;
+        const old = payload?.old || null;
+        if (table === 'tasks') {
+            if (event === 'DELETE' || (row && isSoftDeleted(row))) {
+                const id = String((row || old)?.id || '');
+                if (!id) return schedulePull();
+                forgetDeletedTask(id);
+                state.tasks = (state.tasks || []).filter((task) => String(task.id) !== id);
+            } else if (row) {
+                const next = fromTaskRow(row);
+                if (isSoftDeleted(next)) {
+                    state.tasks = (state.tasks || []).filter((task) => String(task.id) !== String(next.id));
+                } else {
+                    const index = (state.tasks || []).findIndex((task) => String(task.id) === String(next.id));
+                    if (index >= 0) state.tasks[index] = mergeTaskFields(state.tasks[index], next);
+                    else state.tasks = [...(state.tasks || []), next];
+                }
+            } else {
+                return schedulePull();
+            }
+        } else if (table === 'lists') {
+            if (event === 'DELETE' || (row && isSoftDeleted(row))) {
+                const id = String((row || old)?.id || '');
+                if (!id) return schedulePull();
+                forgetDeleted(id);
+                state.lists = (state.lists || []).filter((list) => String(list.id) !== id);
+                state.tasks = (state.tasks || []).filter((task) => String(task.listId) !== id);
+            } else if (row) {
+                const next = fromListRow(row, 'owner');
+                if (isSoftDeleted(next)) {
+                    state.lists = (state.lists || []).filter((list) => String(list.id) !== String(next.id));
+                } else {
+                    const index = (state.lists || []).findIndex((list) => String(list.id) === String(next.id));
+                    if (index >= 0) state.lists[index] = newer(next, state.lists[index]);
+                    else state.lists = [...(state.lists || []), next];
+                }
+            } else {
+                return schedulePull();
+            }
+        } else if (table === 'groups') {
+            if (event === 'DELETE' || (row && isSoftDeleted(row))) {
+                const id = String((row || old)?.id || '');
+                if (!id) return schedulePull();
+                forgetDeletedGroup(id);
+                state.groups = (state.groups || []).filter((group) => String(group.id) !== id);
+            } else if (row) {
+                const next = fromGroupRow(row);
+                if (isSoftDeleted(next)) {
+                    state.groups = (state.groups || []).filter((group) => String(group.id) !== String(next.id));
+                } else {
+                    const index = (state.groups || []).findIndex((group) => String(group.id) === String(next.id));
+                    if (index >= 0) state.groups[index] = newer(next, state.groups[index]);
+                    else state.groups = [...(state.groups || []), next];
+                }
+            } else {
+                return schedulePull();
+            }
+        } else {
+            return schedulePull();
+        }
+        hooks.persistLocal?.();
+        hooks.applyCloud({
+            lists: state.lists,
+            tasks: state.tasks,
+            tags: state.tags,
+            groups: state.groups,
+            settings: state.settings,
+            bitsParams: state.bitsParams,
+            customThemes: state.customThemes,
+            wallpaperAdjust: state.wallpaperAdjust,
+            currentListId: state.currentListId
+        });
     }
 
     async function pull() {
@@ -854,8 +1125,6 @@
         const groupIdsAtStart = new Set((local.groups || []).map((group) => String(group.id)));
         const taskIdsAtStart = new Set((local.tasks || []).map((task) => String(task.id)));
         const themeIdsAtStart = new Set((local.customThemes || []).map((theme) => String(theme.id)));
-        rememberKnown('list', idsAtStart);
-        rememberKnown('group', groupIdsAtStart);
 
         const [listsRes, membersRes, tasksRes, tagsRes, groupsRes, prefsRes] = await Promise.all([
             sb.from('lists').select('*'),
@@ -878,24 +1147,39 @@
 
         const deletedLists = expandTombs(live, user.id);
         const deletedGroups = expandGroupTombs(live);
-        const remoteLists = (listsRes.data || [])
-            .map((row) => fromListRow(row, roleByList[row.id] || 'editor'))
-            .filter((list) => !listIsDeleted(list.id, deletedLists));
-        const remoteTasks = (tasksRes.data || []).map(fromTaskRow);
-        const remoteTags = (tagsRes.data || []).map((row) => ({
-            id: row.id,
-            name: row.name,
-            color: row.color,
-            updatedAt: row.updated_at
-        }));
-        const remoteGroups = (groupsRes.data || [])
+        const allRemoteLists = (listsRes.data || []).map((row) => fromListRow(row, roleByList[row.id] || 'editor'));
+        const serverDeletedLists = new Set(
+            allRemoteLists.filter((list) => isSoftDeleted(list)).map((list) => String(list.id))
+        );
+        serverDeletedLists.forEach((id) => forgetDeleted(id));
+        const remoteLists = allRemoteLists.filter((list) => (
+            !isSoftDeleted(list) && !listIsDeleted(list.id, deletedLists)
+        ));
+
+        const allRemoteTasks = (tasksRes.data || []).map(fromTaskRow);
+        const serverDeletedTasks = new Set(
+            allRemoteTasks.filter((task) => isSoftDeleted(task)).map((task) => String(task.id))
+        );
+        if (serverDeletedTasks.size) forgetDeletedTask([...serverDeletedTasks]);
+        const remoteTasks = allRemoteTasks.filter((task) => !isSoftDeleted(task));
+
+        const remoteTags = (tagsRes.data || [])
+            .filter((row) => !isSoftDeleted(row))
             .map((row) => ({
                 id: row.id,
                 name: row.name,
-                sort: Number(row.sort) || 0,
+                color: row.color,
                 updatedAt: row.updated_at
-            }))
-            .filter((group) => !groupIsDeleted(group.id, deletedGroups));
+            }));
+
+        const allRemoteGroups = (groupsRes.data || []).map(fromGroupRow);
+        const serverDeletedGroups = new Set(
+            allRemoteGroups.filter((group) => isSoftDeleted(group)).map((group) => String(group.id))
+        );
+        serverDeletedGroups.forEach((id) => forgetDeletedGroup(id));
+        const remoteGroups = allRemoteGroups.filter((group) => (
+            !isSoftDeleted(group) && !groupIsDeleted(group.id, deletedGroups)
+        ));
 
         const liveIds = new Set((live.lists || []).map((list) => String(list.id)));
         const liveGroupIds = new Set((live.groups || []).map((group) => String(group.id)));
@@ -903,8 +1187,6 @@
         const deleted = taskTombstoneSet(live);
         const remoteIds = new Set(remoteLists.map((list) => String(list.id)));
         const remoteGroupIds = new Set(remoteGroups.map((group) => String(group.id)));
-        const knownLists = knownListIds(live);
-        const knownGroups = knownGroupIds(live);
         const localOnlyIds = new Set(
             (live.lists || []).filter(listIsLocalOnly).map((list) => String(list.id))
         );
@@ -916,22 +1198,24 @@
                 idsAtStart,
                 liveIds,
                 remoteIds,
-                knownIds: knownLists,
-                localOnlyIds
+                localOnlyIds,
+                serverDeletedIds: serverDeletedLists
             })
             : [...(live.lists || [])];
 
         const remoteTaskIds = new Set(remoteTasks.map((task) => String(task.id)));
         const listIds = new Set(lists.map((list) => String(list.id)));
         const tasks = contentPrefs.lists
-            ? filterPulledTasks(mergeById(live.tasks || [], remoteTasks), {
+            ? filterPulledTasks(mergeById(live.tasks || [], remoteTasks, mergeTaskFields), {
                 tombs: deleted,
                 idsAtStart: taskIdsAtStart,
                 liveIds: liveTaskIds,
-                remoteIds: remoteTaskIds
+                remoteIds: remoteTaskIds,
+                serverDeletedIds: serverDeletedTasks
             }).filter((task) => {
                 const id = String(task.id);
                 if (!listIds.has(String(task.listId)) || listIsDeleted(task.listId, deletedLists)) return false;
+                if (serverDeletedLists.has(String(task.listId))) return false;
                 if (localOnlyIds.has(String(task.listId))) return true;
                 if (remoteTaskIds.has(id)) return true;
                 return !previousSync || stamp(task.updatedAt) >= stamp(previousSync);
@@ -944,7 +1228,7 @@
                 idsAtStart: groupIdsAtStart,
                 liveIds: liveGroupIds,
                 remoteIds: remoteGroupIds,
-                knownIds: knownGroups
+                serverDeletedIds: serverDeletedGroups
             })
             : [...(live.groups || [])];
 
@@ -976,18 +1260,13 @@
         const fresh = hooks.getState() || live;
         const tombsNow = expandTombs(fresh, user.id);
         const groupTombsNow = expandGroupTombs(fresh);
-        const freshListIds = new Set((fresh.lists || []).map((list) => String(list.id)));
-        const freshGroupIds = new Set((fresh.groups || []).map((group) => String(group.id)));
         const freshTaskIds = new Set((fresh.tasks || []).map((task) => String(task.id)));
         const taskTombsNow = taskTombstoneSet(fresh);
-        const knownNow = knownListIds(fresh);
-        const knownGroupsNow = knownGroupIds(fresh);
         const cloudState = { lists, tasks, currentListId };
         ensureHomeListId(cloudState, user.id);
         cloudState.lists = (cloudState.lists || []).filter((list) => {
             const id = String(list.id);
-            if (listIsDeleted(id, tombsNow)) return false;
-            if (knownNow.has(id) && !freshListIds.has(id)) return false;
+            if (serverDeletedLists.has(id) || listIsDeleted(id, tombsNow)) return false;
             return true;
         }).map((list) => {
             const localList = (fresh.lists || []).find((item) => String(item.id) === String(list.id));
@@ -997,7 +1276,7 @@
         cloudState.tasks = (cloudState.tasks || []).filter((task) => {
             const id = String(task.id);
             if (listIsDeleted(task.listId, tombsNow) || !keptListIds.has(String(task.listId))) return false;
-            if (taskIsDeleted(id, taskTombsNow)) return false;
+            if (serverDeletedTasks.has(id) || taskIsDeleted(id, taskTombsNow)) return false;
             if (taskIdsAtStart.has(id) && !freshTaskIds.has(id)) return false;
             return true;
         });
@@ -1024,8 +1303,7 @@
         }
         const keptGroups = (groups || []).filter((group) => {
             const id = String(group.id);
-            if (groupIsDeleted(id, groupTombsNow)) return false;
-            if (knownGroupsNow.has(id) && !freshGroupIds.has(id)) return false;
+            if (serverDeletedGroups.has(id) || groupIsDeleted(id, groupTombsNow)) return false;
             return true;
         });
         const liveCurrent = String(fresh.currentListId || live.currentListId || '');
@@ -1044,9 +1322,7 @@
 
         lastSyncAt = nowIso();
         lastError = '';
-        rememberKnown('list', keptListIds);
-        rememberKnown('group', keptGroups.map((group) => group.id));
-        hooks.applyCloud({
+        const snapshot = {
             lists: cloudState.lists,
             tasks: cloudState.tasks,
             tags,
@@ -1056,7 +1332,9 @@
             customThemes,
             wallpaperAdjust,
             currentListId: cloudState.currentListId
-        });
+        };
+        hooks.applyCloud(snapshot);
+        void saveUserCache(user.id, snapshot);
         await syncWallpaperMedia();
     }
 
@@ -1070,10 +1348,8 @@
         if (ensureHomeListId(state, user.id) || ensureDefaultTagIds(state, user.id)) hooks.persistLocal?.();
         await uploadMissingWallpapers();
         await upsertUserPrefs(sb, user, hooks.getState());
-        rememberKnown('list', (state.lists || []).map((list) => list.id));
-        rememberKnown('group', (state.groups || []).map((group) => group.id));
 
-        await deleteTombstonedLists(sb, state, user.id);
+        await softDeleteTombstonedLists(sb, state, user.id);
         const owned = prefsNow.lists ? await saveOwnedLists(sb, hooks.getState(), user.id) : [];
         const afterLists = hooks.getState();
         const blocked = expandTombs(afterLists, user.id);
@@ -1082,11 +1358,7 @@
             : [];
         const editableIds = editable.map((list) => String(list.id));
 
-        const deletedIds = [...taskTombstoneSet(hooks.getState() || state)];
-        if (deletedIds.length) {
-            const { error: deleteError } = await sb.from('tasks').delete().in('id', deletedIds);
-            if (deleteError && !isBlockedWrite(deleteError)) throw deleteError;
-        }
+        await softDeleteTombstonedTasks(sb, hooks.getState() || state);
 
         if (owned.length) {
             const { error: memberError } = await sb.from('list_members').upsert(
@@ -1112,97 +1384,61 @@
         }
 
         const groupState = hooks.getState();
-        await deleteTombstonedGroups(sb, groupState, user.id);
+        await softDeleteTombstonedGroups(sb, groupState, user.id);
         const groupTombs = expandGroupTombs(groupState);
         const liveGroups = prefsNow.groups
             ? (groupState.groups || []).filter((group) => !groupIsDeleted(group.id, groupTombs))
             : [];
-        const groups = liveGroups.map((group, index) => ({
-            id: String(group.id),
-            user_id: user.id,
-            name: group.name || 'Group',
-            sort: Number.isFinite(Number(group.sort)) ? Number(group.sort) : index,
-            updated_at: group.updatedAt || nowIso()
-        }));
+        const groups = liveGroups.map((group, index) => toGroupRow(group, user.id, index, null));
         if (groups.length) {
-            let error = await upsertByUser(sb, 'groups', groups);
-            if (error && isBlockedWrite(error)) {
-                for (const group of liveGroups) {
-                    const compact = String(user.id).replace(/-/g, '');
-                    if (String(group.id).includes(compact)) continue;
-                    const next = `group_${compact}_${group.id}`.slice(0, 80);
-                    (groupState.lists || []).forEach((list) => {
-                        if (String(list.groupId) === String(group.id)) list.groupId = next;
-                    });
-                    group.id = next;
-                }
-                hooks.persistLocal?.();
-                const retryTombs = expandGroupTombs(hooks.getState());
-                const retryGroups = (hooks.getState().groups || [])
-                    .filter((group) => !groupIsDeleted(group.id, retryTombs))
-                    .map((group, index) => ({
-                        id: String(group.id),
-                        user_id: user.id,
-                        name: group.name || 'Group',
-                        sort: Number.isFinite(Number(group.sort)) ? Number(group.sort) : index,
-                        updated_at: group.updatedAt || nowIso()
-                    }));
-                error = await upsertByUser(sb, 'groups', retryGroups);
-            }
+            const error = await upsertByUser(sb, 'groups', groups);
             if (error) throw error;
         }
 
         const afterGroups = hooks.getState();
-        await deleteTombstonedLists(sb, afterGroups, user.id);
-        await deleteTombstonedGroups(sb, afterGroups, user.id);
-
-        if (prefsNow.groups) {
-            const { data: remoteGroups } = await sb.from('groups').select('id').eq('user_id', user.id);
-            const keptGroupIds = new Set(
-                (afterGroups.groups || [])
-                    .filter((group) => !groupIsDeleted(group.id, expandGroupTombs(afterGroups)))
-                    .map((group) => String(group.id))
-            );
-            const extraGroups = (remoteGroups || [])
-                .map((row) => row.id)
-                .filter((id) => !keptGroupIds.has(String(id)) || groupIsDeleted(id, expandGroupTombs(afterGroups)));
-            if (extraGroups.length) {
-                const { error } = await sb.from('groups').delete().eq('user_id', user.id).in('id', extraGroups);
-                if (error) throw error;
-            }
-        }
+        await softDeleteTombstonedLists(sb, afterGroups, user.id);
+        await softDeleteTombstonedGroups(sb, afterGroups, user.id);
 
         const ownedIds = new Set(owned.map((list) => String(list.id)));
         const localTasks = (state.tasks || []).filter((task) => editableIds.includes(String(task.listId)));
         if (editableIds.length) {
             const { data: remoteTasks, error: taskSelectError } = await sb.from('tasks')
-                .select('id, list_id, updated_at')
+                .select('id, list_id, updated_at, deleted_at')
                 .in('list_id', editableIds);
             if (taskSelectError) throw taskSelectError;
             const remoteById = new Map((remoteTasks || []).map((row) => [String(row.id), row]));
             const toUpsert = localTasks.filter((task) => {
                 const remote = remoteById.get(String(task.id));
                 if (!remote) return true;
+                if (remote.deleted_at) return false;
                 return stamp(task.updatedAt) >= stamp(remote.updated_at);
             });
             if (toUpsert.length) {
-                const { error } = await sb.from('tasks').upsert(toUpsert.map(toTaskRow), { onConflict: 'id' });
+                const { error } = await sb.from('tasks').upsert(
+                    toUpsert.map((task) => toTaskRow(task, null)),
+                    { onConflict: 'id' }
+                );
                 if (error && isBlockedWrite(error)) {
-                    const compact = String(user.id).replace(/-/g, '');
                     toUpsert.forEach((task) => {
                         if (!ownedIds.has(String(task.listId))) return;
-                        if (String(task.id).includes(compact)) return;
+                        if (String(task.id).startsWith('task_')) return;
                         task.id = `task_${crypto.randomUUID()}`;
                     });
                     hooks.persistLocal?.();
-                    const { error: retryError } = await sb.from('tasks').upsert(toUpsert.map(toTaskRow), { onConflict: 'id' });
+                    const { error: retryError } = await sb.from('tasks').upsert(
+                        toUpsert.map((task) => toTaskRow(task, null)),
+                        { onConflict: 'id' }
+                    );
                     if (retryError) throw retryError;
                 } else if (error) {
                     throw error;
                 }
             }
         } else if (localTasks.length) {
-            const { error } = await sb.from('tasks').upsert(localTasks.map(toTaskRow), { onConflict: 'id' });
+            const { error } = await sb.from('tasks').upsert(
+                localTasks.map((task) => toTaskRow(task, null)),
+                { onConflict: 'id' }
+            );
             if (error) throw error;
         }
 
@@ -1211,42 +1447,11 @@
             user_id: user.id,
             name: tag.name || 'Tag',
             color: tag.color || '#b19eef',
+            deleted_at: null,
             updated_at: tag.updatedAt || nowIso()
         }));
         if (tags.length) {
-            let error = await upsertByUser(sb, 'tags', tags);
-            if (error && isBlockedWrite(error)) {
-                const compact = String(user.id).replace(/-/g, '');
-                const map = new Map();
-                (state.tags || []).forEach((tag) => {
-                    const id = String(tag.id);
-                    if (id.includes(compact)) return;
-                    const next = `tag_${compact}_${id}`.slice(0, 80);
-                    map.set(id, next);
-                    tag.id = next;
-                });
-                if (map.size) {
-                    (state.tasks || []).forEach((task) => {
-                        task.tags = (task.tags || []).map((id) => map.get(String(id)) || id);
-                    });
-                    hooks.persistLocal?.();
-                }
-                const retryTags = (state.tags || []).map((tag) => ({
-                    id: String(tag.id),
-                    user_id: user.id,
-                    name: tag.name || 'Tag',
-                    color: tag.color || '#b19eef',
-                    updated_at: tag.updatedAt || nowIso()
-                }));
-                error = await upsertByUser(sb, 'tags', retryTags);
-            }
-            if (error) throw error;
-        }
-        const { data: remoteTags } = await sb.from('tags').select('id').eq('user_id', user.id);
-        const localTagIds = new Set((state.tags || []).map((tag) => String(tag.id)));
-        const extraTags = (remoteTags || []).filter((row) => !localTagIds.has(row.id)).map((row) => row.id);
-        if (extraTags.length) {
-            const { error } = await sb.from('tags').delete().eq('user_id', user.id).in('id', extraTags);
+            const error = await upsertByUser(sb, 'tags', tags);
             if (error) throw error;
         }
 
@@ -1254,6 +1459,7 @@
         lastSyncAt = nowIso();
         lastError = '';
         pullBlocked = false;
+        void saveUserCache(user.id, hooks.getState() || state);
         const wrote = await downloadMissingWallpapers();
         if (wrote) hooks.onMedia?.();
     }
@@ -1350,14 +1556,21 @@
         const user = await sessionUser();
         if (!sb || !user) return;
         liveChannel = sb.channel('orbit-live')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => schedulePull())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'lists' }, () => schedulePull())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'groups' }, () => schedulePull())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (payload) => {
+                try { applyIncrementalChange('tasks', payload); } catch { schedulePull(); }
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'lists' }, (payload) => {
+                try { applyIncrementalChange('lists', payload); } catch { schedulePull(); }
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'groups' }, (payload) => {
+                try { applyIncrementalChange('groups', payload); } catch { schedulePull(); }
+            })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'list_members' }, () => schedulePull())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'tags' }, () => schedulePull())
             .subscribe();
         pollTimer = global.setInterval(() => {
             if (!document.hidden) schedulePull();
-        }, 3000);
+        }, 8000);
     }
 
     function schedulePush() {
@@ -1434,6 +1647,7 @@
         },
         async init(nextHooks) {
             hooks = nextHooks || {};
+            runLocalMigration();
             const sb = await getClient();
             if (!sb) {
                 hooks.onStatus?.();
@@ -1442,15 +1656,23 @@
             sb.auth.onAuthStateChange(async (event) => {
                 if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
                     await OrbitSync.consumeInviteFromUrl();
+                    const user = await sessionUser();
+                    if (user) {
+                        cachedUserId = user.id;
+                        hooks.ensureLiveDefault?.();
+                    }
                     const prefsNow = syncPrefs();
                     if (prefsNow.mode === 'off') {
                         stopLive();
                         stopWallpaperWatch();
                     } else if (event === 'SIGNED_IN') {
-                        await run('both', { force: true });
+                        await hooks.wipeGuestLocal?.();
+                        if (user) await paintFromUserCache(user.id);
+                        await run('pull', { force: true });
                         await startLive();
                         await startWallpaperWatch();
                     } else if (prefsNow.mode === 'live') {
+                        if (event === 'INITIAL_SESSION' && user) await paintFromUserCache(user.id);
                         await run(event === 'TOKEN_REFRESHED' ? 'push' : 'both');
                         await startLive();
                         await startWallpaperWatch();
@@ -1463,6 +1685,7 @@
                 if (event === 'SIGNED_OUT') {
                     stopLive();
                     stopWallpaperWatch();
+                    cachedUserId = null;
                     hooks.onStatus?.();
                 }
                 hooks.onAuth?.();
@@ -1479,7 +1702,11 @@
             });
             await OrbitSync.consumeInviteFromUrl();
             ready = true;
-            if (await sessionUser()) {
+            const user = await sessionUser();
+            if (user) {
+                cachedUserId = user.id;
+                hooks.ensureLiveDefault?.();
+                await paintFromUserCache(user.id);
                 await startLive();
                 await startWallpaperWatch();
             }
@@ -1528,30 +1755,8 @@
         async pushNow() {
             await run('push');
         },
-        async createInvite(listId) {
-            const sb = await getClient();
-            const user = await sessionUser();
-            if (!sb || !user) throw new Error('Sign in to share a list.');
-            await run('push');
-            const state = hooks.getState?.() || {};
-            const list = (state.lists || []).find((item) => (
-                String(item.id) === String(listId)
-                || (String(listId) === 'default' && isHomeListId(item.id))
-            ));
-            if (!list) throw new Error('Upload this list first, then share it.');
-            if (list.role === 'editor') throw new Error('Only the owner can share this list.');
-            const token = randomToken();
-            const expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 365).toISOString();
-            const { error } = await sb.from('list_invites').insert({
-                token,
-                list_id: String(list.id),
-                created_by: user.id,
-                expires_at: expires
-            });
-            if (error) throw error;
-            const url = new URL(redirectTo());
-            url.searchParams.set('invite', token);
-            return url.toString();
+        async createInvite() {
+            throw new Error('List sharing is paused while personal sync is being fixed.');
         },
         async redeemInvite(token) {
             const sb = await getClient();
@@ -1600,8 +1805,12 @@
             const user = await sessionUser();
             if (!sb || !user || !listId) return;
             const id = String(listId);
-            const { error: deleteError } = await sb.from('lists').delete().eq('id', id);
-            if (deleteError && !isBlockedWrite(deleteError)) throw deleteError;
+            const stampNow = nowIso();
+            const { error: softError } = await sb.from('lists')
+                .update({ deleted_at: stampNow, updated_at: stampNow })
+                .eq('id', id)
+                .eq('owner_id', user.id);
+            if (softError && !isBlockedWrite(softError)) throw softError;
             const { error: leaveError } = await sb.rpc('leave_shared_list', { p_list_id: id });
             void leaveError;
         }
