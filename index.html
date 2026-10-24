@@ -112,7 +112,7 @@
             </header>
 
             <div class="input-group">
-                <input type="text" id="todo-input" placeholder="What's on your mind?" autocomplete="off" maxlength="240" aria-label="New task">
+                <input type="text" id="todo-input" name="new-task" placeholder="What's on your mind?" autocomplete="one-time-code" maxlength="240" aria-label="New task" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
                 <button type="button" id="add-btn" class="btn-primary" aria-label="Add task">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -218,14 +218,14 @@
             <h3 id="account-modal-title">Account</h3>
             <p class="setting-hint" id="account-hint">Sign in to sync across devices. Password sign-up works immediately — no email confirmation. Guest data on this device is wiped when you log in (it is not merged into the cloud).</p>
             <div id="account-signed-out">
-                <div class="setting-group">
+                <form id="account-auth-form" class="setting-group" autocomplete="on" onsubmit="return false;">
                     <label for="account-email">Email</label>
-                    <input type="email" id="account-email" class="modal-input" placeholder="you@email.com" autocomplete="email">
+                    <input type="email" id="account-email" name="username" class="modal-input" placeholder="you@email.com" autocomplete="username">
                     <label for="account-password">Password</label>
-                    <input type="password" id="account-password" class="modal-input" placeholder="Password" autocomplete="current-password">
+                    <input type="password" id="account-password" name="password" class="modal-input" placeholder="Password" autocomplete="current-password">
                     <button type="button" id="account-login-btn" class="btn-primary">Log in</button>
                     <button type="button" id="account-signup-btn" class="settings-link">Create account</button>
-                </div>
+                </form>
                 <div class="setting-group">
                     <p class="setting-hint">Or email a one-time link instead.</p>
                     <button type="button" id="account-signin-btn" class="settings-link">Send sign-in link</button>
