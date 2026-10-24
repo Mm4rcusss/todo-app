@@ -27,6 +27,7 @@
     const sessionTaskTombs = new Set();
     let pullBlocked = false;
     let cachedUserId = null;
+    let authEventQueue = Promise.resolve();
 
     function loadStoredIds(key) {
         try {
@@ -620,17 +621,46 @@
 
     const AUTH_STORAGE_KEY = 'orbit-todo-auth';
 
+    function legacyAuthStorageKey() {
+        const projectRef = String(config().url || '').match(/https?:\/\/([^.]+)\.supabase\.co/i)?.[1];
+        return projectRef ? `sb-${projectRef}-auth-token` : '';
+    }
+
     function migrateAuthStorage() {
         try {
-            if (localStorage.getItem(AUTH_STORAGE_KEY)) return;
-            const projectRef = String(config().url || '').match(/https?:\/\/([^.]+)\.supabase\.co/i)?.[1];
-            if (!projectRef) return;
-            const legacyKey = `sb-${projectRef}-auth-token`;
+            const legacyKey = legacyAuthStorageKey();
+            if (!legacyKey) return;
             const legacy = localStorage.getItem(legacyKey);
-            if (legacy) localStorage.setItem(AUTH_STORAGE_KEY, legacy);
+            if (legacy && !localStorage.getItem(AUTH_STORAGE_KEY)) {
+                localStorage.setItem(AUTH_STORAGE_KEY, legacy);
+            }
+            // Remove the leftover after a successful copy, or whenever both keys
+            // exist, so sign-out cannot be undone by the next getClient().
+            if (localStorage.getItem(legacyKey) != null && localStorage.getItem(AUTH_STORAGE_KEY)) {
+                localStorage.removeItem(legacyKey);
+            }
         } catch {
             /* ignore */
         }
+    }
+
+    function clearStoredAuth() {
+        try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch { /* ignore */ }
+        const keys = new Set();
+        try {
+            const exact = legacyAuthStorageKey();
+            if (exact) keys.add(exact);
+            const length = Number(localStorage.length) || 0;
+            for (let i = 0; i < length; i += 1) {
+                const key = localStorage.key(i);
+                if (key && /^sb-.+-auth-token$/.test(key)) keys.add(key);
+            }
+        } catch {
+            /* ignore */
+        }
+        keys.forEach((key) => {
+            try { localStorage.removeItem(key); } catch { /* ignore */ }
+        });
     }
 
     async function getClient() {
@@ -697,6 +727,18 @@
             hooks.onStatus?.();
         }
         hooks.onAuth?.();
+    }
+
+    function enqueueSerial(task) {
+        const run = authEventQueue.then(task, task);
+        authEventQueue = run.then(() => {}, () => {});
+        return run;
+    }
+
+    function enqueueAuthEvent(event, session) {
+        return enqueueSerial(() => handleAuthEvent(event, session)).catch((err) => {
+            console.warn('Orbit auth event', err);
+        });
     }
 
     function storedInvite() {
@@ -1697,7 +1739,10 @@
             listIsDeleted,
             groupIsDeleted,
             taskIsDeleted,
-            mergeById
+            mergeById,
+            migrateAuthStorage,
+            clearStoredAuth,
+            enqueueSerial
         },
         async user() {
             return sessionUser();
@@ -1712,9 +1757,10 @@
             }
             // Sync callback must not await auth APIs (getSession/getUser) or the
             // supabase-js auth lock deadlocks and reload looks signed-out.
+            // Handlers run later, one at a time, in the order events arrived.
             sb.auth.onAuthStateChange((event, session) => {
                 global.setTimeout(() => {
-                    void handleAuthEvent(event, session);
+                    enqueueAuthEvent(event, session);
                 }, 0);
             });
             document.addEventListener('visibilitychange', () => {
@@ -1770,9 +1816,12 @@
             return data;
         },
         async signOut() {
-            const sb = await getClient();
-            if (!sb) return;
-            await sb.auth.signOut();
+            try {
+                const sb = await getClient();
+                if (sb) await sb.auth.signOut();
+            } finally {
+                clearStoredAuth();
+            }
         },
         schedulePush,
         async syncNow() {
