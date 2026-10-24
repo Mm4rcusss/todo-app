@@ -653,19 +653,11 @@
     async function sessionUser() {
         const sb = await getClient();
         if (!sb) return null;
-        // Prefer the persisted local session so reload UI stays signed-in even if
-        // a network getUser() is slow or fails. Avoid calling auth APIs from
-        // inside onAuthStateChange — that deadlocks the supabase auth lock.
+        // Local persisted session only. Do not call getUser() here: when signed
+        // out it returns "Auth session missing!" which was leaking into the
+        // account UI, and calling auth APIs inside onAuthStateChange deadlocks.
         const { data: sessionData } = await sb.auth.getSession();
-        if (sessionData?.session?.user) return sessionData.session.user;
-        try {
-            const { data: userData, error: userError } = await sb.auth.getUser();
-            if (userData?.user) return userData.user;
-            if (userError) lastError = formatError(userError);
-        } catch (err) {
-            lastError = formatError(err);
-        }
-        return null;
+        return sessionData?.session?.user || null;
     }
 
     async function handleAuthEvent(event, session) {
