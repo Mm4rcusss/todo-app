@@ -618,14 +618,33 @@
         }
     }
 
+    const AUTH_STORAGE_KEY = 'orbit-todo-auth';
+
+    function migrateAuthStorage() {
+        try {
+            if (localStorage.getItem(AUTH_STORAGE_KEY)) return;
+            const projectRef = String(config().url || '').match(/https?:\/\/([^.]+)\.supabase\.co/i)?.[1];
+            if (!projectRef) return;
+            const legacyKey = `sb-${projectRef}-auth-token`;
+            const legacy = localStorage.getItem(legacyKey);
+            if (legacy) localStorage.setItem(AUTH_STORAGE_KEY, legacy);
+        } catch {
+            /* ignore */
+        }
+    }
+
     async function getClient() {
         if (!isConfigured() || !global.supabase?.createClient) return null;
         if (client) return client;
+        migrateAuthStorage();
         client = global.supabase.createClient(config().url, config().anonKey, {
             auth: {
                 persistSession: true,
                 autoRefreshToken: true,
-                detectSessionInUrl: true
+                detectSessionInUrl: true,
+                flowType: 'pkce',
+                storage: global.localStorage,
+                storageKey: AUTH_STORAGE_KEY
             }
         });
         return client;
@@ -634,12 +653,58 @@
     async function sessionUser() {
         const sb = await getClient();
         if (!sb) return null;
-        const { data: userData, error: userError } = await sb.auth.getUser();
-        if (userData?.user) return userData.user;
+        // Prefer the persisted local session so reload UI stays signed-in even if
+        // a network getUser() is slow or fails. Avoid calling auth APIs from
+        // inside onAuthStateChange — that deadlocks the supabase auth lock.
         const { data: sessionData } = await sb.auth.getSession();
         if (sessionData?.session?.user) return sessionData.session.user;
-        if (userError && sessionData?.session) lastError = formatError(userError);
+        try {
+            const { data: userData, error: userError } = await sb.auth.getUser();
+            if (userData?.user) return userData.user;
+            if (userError) lastError = formatError(userError);
+        } catch (err) {
+            lastError = formatError(err);
+        }
         return null;
+    }
+
+    async function handleAuthEvent(event, session) {
+        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
+            await OrbitSync.consumeInviteFromUrl();
+            const user = session?.user || null;
+            if (user) {
+                cachedUserId = user.id;
+                hooks.ensureLiveDefault?.();
+            }
+            const prefsNow = syncPrefs();
+            if (prefsNow.mode === 'off') {
+                stopLive();
+                stopWallpaperWatch();
+            } else if (event === 'SIGNED_IN') {
+                // Real login only — never wipe on INITIAL_SESSION / reload.
+                await hooks.wipeGuestLocal?.();
+                if (user) await paintFromUserCache(user.id);
+                await run('pull', { force: true });
+                await startLive();
+                await startWallpaperWatch();
+            } else if (prefsNow.mode === 'live') {
+                if (event === 'INITIAL_SESSION' && user) await paintFromUserCache(user.id);
+                await run(event === 'TOKEN_REFRESHED' ? 'push' : 'both');
+                await startLive();
+                await startWallpaperWatch();
+            } else {
+                await run('push');
+                stopLive();
+                await startWallpaperWatch();
+            }
+        }
+        if (event === 'SIGNED_OUT') {
+            stopLive();
+            stopWallpaperWatch();
+            cachedUserId = null;
+            hooks.onStatus?.();
+        }
+        hooks.onAuth?.();
     }
 
     function storedInvite() {
@@ -1653,42 +1718,12 @@
                 hooks.onStatus?.();
                 return;
             }
-            sb.auth.onAuthStateChange(async (event) => {
-                if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
-                    await OrbitSync.consumeInviteFromUrl();
-                    const user = await sessionUser();
-                    if (user) {
-                        cachedUserId = user.id;
-                        hooks.ensureLiveDefault?.();
-                    }
-                    const prefsNow = syncPrefs();
-                    if (prefsNow.mode === 'off') {
-                        stopLive();
-                        stopWallpaperWatch();
-                    } else if (event === 'SIGNED_IN') {
-                        await hooks.wipeGuestLocal?.();
-                        if (user) await paintFromUserCache(user.id);
-                        await run('pull', { force: true });
-                        await startLive();
-                        await startWallpaperWatch();
-                    } else if (prefsNow.mode === 'live') {
-                        if (event === 'INITIAL_SESSION' && user) await paintFromUserCache(user.id);
-                        await run(event === 'TOKEN_REFRESHED' ? 'push' : 'both');
-                        await startLive();
-                        await startWallpaperWatch();
-                    } else {
-                        await run('push');
-                        stopLive();
-                        await startWallpaperWatch();
-                    }
-                }
-                if (event === 'SIGNED_OUT') {
-                    stopLive();
-                    stopWallpaperWatch();
-                    cachedUserId = null;
-                    hooks.onStatus?.();
-                }
-                hooks.onAuth?.();
+            // Sync callback must not await auth APIs (getSession/getUser) or the
+            // supabase-js auth lock deadlocks and reload looks signed-out.
+            sb.auth.onAuthStateChange((event, session) => {
+                global.setTimeout(() => {
+                    void handleAuthEvent(event, session);
+                }, 0);
             });
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden) schedulePull();
@@ -1711,6 +1746,7 @@
                 await startWallpaperWatch();
             }
             hooks.onStatus?.();
+            hooks.onAuth?.();
         },
         async sendMagicLink(email) {
             const sb = await getClient();
