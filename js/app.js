@@ -531,6 +531,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function wipeGuestLocal() {
+        // Guest lists/media only — never clear Supabase auth keys (orbit-todo-auth / sb-*-auth-token).
         const oldThemeIds = (state.customThemes || []).map((theme) => theme.id);
         const next = defaultGuestState();
         Object.keys(state).forEach((key) => { delete state[key]; });
@@ -4005,7 +4006,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const configured = Boolean(window.OrbitSync?.isConfigured());
         if (hint) {
             hint.textContent = configured
-                ? 'Use email and a password. If you already created an account, tap Log in — creating it again sends another email.'
+                ? 'Use email and a password. Sign-up logs you in right away — no email confirmation. Guest lists stay on this device only until you sign in.'
                 : 'Cloud sync is not configured. Add your Supabase URL and anon key in js/supabase-config.js.';
         }
         const user = configured ? await window.OrbitSync.user() : null;
@@ -4562,7 +4563,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     setAccountNote('');
                     refreshAccountUi();
                 } else {
-                    setAccountNote('Account created. If it asks you to confirm, check email once, then tap Log in. Don’t tap Create account again.');
+                    setAccountNote('Account created. Tap Log in with the same email and password.');
                 }
             } catch (err) {
                 setAccountNote(authNote(err, 'Could not create that account.'), true);
