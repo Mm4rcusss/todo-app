@@ -8,6 +8,7 @@ create table if not exists public.groups (
     user_id uuid not null references auth.users (id) on delete cascade,
     name text not null default 'Group',
     sort integer not null default 0,
+    deleted_at timestamptz,
     updated_at timestamptz not null default now()
 );
 
@@ -21,6 +22,7 @@ create table if not exists public.lists (
     color text not null default '#b19eef',
     reset_frequency text not null default 'none',
     reset jsonb not null default '{"type":"none"}'::jsonb,
+    deleted_at timestamptz,
     updated_at timestamptz not null default now()
 );
 
@@ -48,6 +50,7 @@ create table if not exists public.tasks (
     date text,
     tags jsonb not null default '[]'::jsonb,
     sort_order integer not null default 0,
+    deleted_at timestamptz,
     updated_at timestamptz not null default now()
 );
 
@@ -56,6 +59,7 @@ create table if not exists public.tags (
     user_id uuid not null references auth.users (id) on delete cascade,
     name text not null,
     color text not null default '#b19eef',
+    deleted_at timestamptz,
     updated_at timestamptz not null default now()
 );
 
@@ -74,6 +78,14 @@ create index if not exists tasks_list_idx on public.tasks (list_id);
 create index if not exists tags_user_idx on public.tags (user_id);
 create index if not exists groups_user_idx on public.groups (user_id);
 create index if not exists list_members_user_idx on public.list_members (user_id);
+
+alter table public.groups add column if not exists deleted_at timestamptz;
+alter table public.lists add column if not exists deleted_at timestamptz;
+alter table public.tasks add column if not exists deleted_at timestamptz;
+alter table public.tags add column if not exists deleted_at timestamptz;
+create index if not exists lists_deleted_idx on public.lists (deleted_at);
+create index if not exists tasks_deleted_idx on public.tasks (deleted_at);
+create index if not exists groups_deleted_idx on public.groups (deleted_at);
 
 create or replace function public.is_list_member(_list_id text)
 returns boolean
@@ -312,6 +324,18 @@ begin
     ) then
         execute 'alter publication supabase_realtime add table public.user_prefs';
     end if;
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'groups'
+    ) then
+        execute 'alter publication supabase_realtime add table public.groups';
+    end if;
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'tags'
+    ) then
+        execute 'alter publication supabase_realtime add table public.tags';
+    end if;
 end $$;
 
 -- Per-account wallpaper files. Path: {user_id}/wallpapers/{id}.jpg
@@ -320,7 +344,7 @@ values (
     'orbit-media',
     'orbit-media',
     false,
-    2097152,
+    10485760,
     array['image/jpeg', 'image/png', 'image/webp']
 )
 on conflict (id) do update set

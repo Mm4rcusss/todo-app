@@ -431,7 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
             delete state.settings.loginChip;
         }
         state.settings.optimizedMode = Boolean(shell?.optimizedMode);
-        state.settings.syncMode = shell?.syncMode === 'off' || shell?.syncMode === 'live' ? shell.syncMode : 'push';
+        state.settings.syncMode = shell?.syncMode === 'off' || shell?.syncMode === 'push' ? shell.syncMode : 'live';
         state.settings.syncLists = shell?.syncLists !== false;
         state.settings.syncGroups = shell?.syncGroups !== false;
         if (shell && Object.prototype.hasOwnProperty.call(shell, 'trash')) {
@@ -482,12 +482,84 @@ document.addEventListener('DOMContentLoaded', () => {
                 loginChip: state.settings.loginChip || { hidden: false },
                 optimizedMode: Boolean(state.settings.optimizedMode),
                 usedCompactWindow: true,
-                syncMode: state.settings.syncMode === 'off' || state.settings.syncMode === 'live' ? state.settings.syncMode : 'push',
+                syncMode: state.settings.syncMode === 'off' || state.settings.syncMode === 'push' ? state.settings.syncMode : 'live',
                 syncLists: state.settings.syncLists !== false,
                 syncGroups: state.settings.syncGroups !== false,
                 trash: Array.isArray(state.settings.trash) ? state.settings.trash.slice(0, 5) : []
             }));
         } catch { /* ignore */ }
+    }
+
+    function defaultGuestState() {
+        return {
+            lists: [
+                { id: 'default', name: 'My Tasks', icon: '📝', theme: 'rb-particles', color: '#b19eef', resetFrequency: 'none' }
+            ],
+            tasks: [],
+            tags: [
+                { id: 'urgent', name: 'Urgent', color: '#ff4d4d' },
+                { id: 'work', name: 'Work', color: '#00bfff' }
+            ],
+            currentListId: 'default',
+            groups: [],
+            deletedTaskIds: [],
+            deletedListIds: [],
+            deletedGroupIds: [],
+            currentDate: todayLocal(),
+            viewDate: todayLocal(),
+            settings: {
+                sortBy: 'custom',
+                sidebar: { ...(state.settings?.sidebar || { side: 'left', mode: 'dock' }) },
+                widgets: { clock: false, date: false, pet: false },
+                petChoice: 'cat',
+                pets: [],
+                widgetPos: {},
+                widgetViewport: true,
+                window: state.settings?.window || { width: 34, height: 53 },
+                taskScale: state.settings?.taskScale || 1,
+                syncMode: 'live',
+                syncLists: true,
+                syncGroups: true,
+                loginChip: state.settings?.loginChip,
+                optimizedMode: Boolean(state.settings?.optimizedMode),
+                trash: []
+            },
+            customThemes: [],
+            bitsParams: {},
+            wallpaperAdjust: {}
+        };
+    }
+
+    async function wipeGuestLocal() {
+        const oldThemeIds = (state.customThemes || []).map((theme) => theme.id);
+        const next = defaultGuestState();
+        Object.keys(state).forEach((key) => { delete state[key]; });
+        Object.assign(state, next);
+        try {
+            localStorage.removeItem(STATE_KEY);
+            localStorage.removeItem(LEGACY_MOBILE_KEY);
+            localStorage.removeItem('orbit_deleted_lists');
+            localStorage.removeItem('orbit_deleted_groups');
+            localStorage.removeItem('orbit_deleted_tasks');
+            localStorage.removeItem('orbit_known_lists');
+            localStorage.removeItem('orbit_known_groups');
+        } catch { /* ignore */ }
+        for (const id of oldThemeIds) {
+            try { await wallpaperDel(id); } catch { /* ignore */ }
+        }
+        writeLocalState();
+        renderSidebar();
+        renderHeader();
+        renderTodos();
+        renderThemeOptions();
+        refreshAccountUi();
+    }
+
+    function ensureLiveDefault() {
+        if (state.settings.syncMode === 'off' || state.settings.syncMode === 'push') return;
+        state.settings.syncMode = 'live';
+        applySyncSettingsUi();
+        writeLocalState();
     }
 
     function loginChipConfig() {
@@ -861,7 +933,7 @@ document.addEventListener('DOMContentLoaded', () => {
         listTitle.append(titleInput, sortBtn);
 
         currentDateEl.textContent = resetLabel(list) || parseLocalDate(state.currentDate).toLocaleDateString('en-US', DATE_FORMAT);
-        if (inviteBtn) inviteBtn.hidden = document.getElementById('cloud-actions')?.hidden || list.role === 'editor';
+        if (inviteBtn) inviteBtn.hidden = true;
     }
 
     function groupParentId(group) {
@@ -2099,7 +2171,7 @@ document.addEventListener('DOMContentLoaded', () => {
             addGroupOptions('', 0);
         }
         const shareGroup = document.getElementById('share-list-group');
-        if (shareGroup) shareGroup.hidden = list.role === 'editor' || list.sync === false;
+        if (shareGroup) shareGroup.hidden = true;
         const listSync = document.getElementById('list-sync-toggle');
         if (listSync) {
             listSync.checked = list.sync !== false;
@@ -2588,11 +2660,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const id = uid('custom_');
             await wallpaperPut(id, dataUrl);
+            let cloudOk = true;
             try {
                 const blob = await (await fetch(dataUrl)).blob();
                 await window.OrbitSync?.uploadWallpaper?.(id, blob);
-            } catch {
-                /* Local save still works; cloud upload retries on the next sync. */
+            } catch (err) {
+                cloudOk = false;
+                const detail = err?.message || window.OrbitSync?.lastError?.() || '';
+                setWallpaperStatus(detail
+                    ? `Saved on this device, but cloud upload failed: ${detail}`
+                    : 'Saved on this device, but cloud upload failed. It will retry on the next sync.');
             }
             const custom = {
                 id,
@@ -2606,7 +2683,9 @@ document.addEventListener('DOMContentLoaded', () => {
             saveState();
             await applyTheme(id);
             renderThemeOptions();
-            setWallpaperStatus('Wallpaper added. Signed-in accounts sync it across devices.');
+            if (cloudOk) {
+                setWallpaperStatus('Wallpaper added. Signed-in accounts sync it across devices.');
+            }
         } catch (err) {
             setWallpaperStatus(err.message || 'Could not save that wallpaper.');
         }
@@ -3047,12 +3126,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function syncModeValue() {
         const mode = state.settings.syncMode;
-        return mode === 'off' || mode === 'live' ? mode : 'push';
+        return mode === 'off' || mode === 'push' ? mode : 'live';
     }
 
     function syncModeHint(mode) {
-        if (mode === 'off') return 'This device stays local. Sign in still works. Nothing uploads or downloads.';
-        if (mode === 'live') return 'Keeps phone and computer in sync automatically. If a deleted list comes back, switch to Upload only.';
+        if (mode === 'off') return 'This device stays local. Guest data stays on this device only. Signing in wipes guest data and loads your cloud account.';
+        if (mode === 'live') return 'Keeps phone and computer in sync automatically. Signed-in accounts use live sync by default.';
         return 'Sends your changes. Will not pull lists back every few seconds. Tap Sync when you want to download from another device.';
     }
 
@@ -3072,11 +3151,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function setSyncMode(mode) {
-        state.settings.syncMode = mode === 'off' || mode === 'live' ? mode : 'push';
+        state.settings.syncMode = mode === 'off' || mode === 'push' ? mode : 'live';
         applySyncSettingsUi();
         saveState({ skipSync: true });
         await window.OrbitSync?.applySyncMode?.();
         if (state.settings.syncMode === 'push') window.OrbitSync?.schedulePush?.();
+        if (state.settings.syncMode === 'live') window.OrbitSync?.syncNow?.();
         refreshAccountUi();
     }
 
@@ -3959,14 +4039,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const accountSync = document.getElementById('account-sync-btn');
         if (accountSync) accountSync.hidden = !user || syncModeValue() === 'off';
         const inviteBtn = document.getElementById('header-invite-btn');
-        if (inviteBtn) inviteBtn.hidden = !user || !currentList() || currentList()?.role === 'editor' || currentList()?.sync === false;
+        if (inviteBtn) inviteBtn.hidden = true;
         if (signedOut) signedOut.hidden = !configured || Boolean(user);
         if (signedIn) signedIn.hidden = !user;
         if (emailLabel) emailLabel.textContent = user?.email || '';
         const err = window.OrbitSync?.lastError();
         const synced = window.OrbitSync?.lastSyncAt();
         const note = err
-            || (window.OrbitSync?.pendingInvite?.() && !user ? 'Sign in to join the shared list from your invite link.' : '')
+            || (window.OrbitSync?.pendingInvite?.() && !user ? 'List sharing is paused; invite links are not joining right now.' : '')
             || (synced ? `Last sync ${new Date(synced).toLocaleString()}` : '');
         if (status) {
             status.hidden = !note;
@@ -4188,6 +4268,11 @@ document.addEventListener('DOMContentLoaded', () => {
             editingItem: () => snapshotEditSession(),
             wallpaperGet,
             wallpaperPut,
+            wipeGuestLocal,
+            ensureLiveDefault,
+            onWallpaperError: (message) => {
+                setWallpaperStatus(message || 'Wallpaper upload failed.');
+            },
             onMedia: () => {
                 if (isTypingTarget(document.activeElement)) return;
                 renderThemeOptions();
@@ -4199,7 +4284,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 refreshAccountUi();
             },
             onInvitePending: () => {
-                showNotice('Sign in to join that shared list.');
+                showNotice('List sharing is paused while personal sync is being fixed.');
                 refreshAccountUi();
             },
             onJoinedList: (listId) => {
