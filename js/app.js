@@ -1512,7 +1512,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <button type="button" class="checkbox" role="checkbox" aria-checked="${todo.completed}" aria-label="${todo.completed ? 'Mark as not done' : 'Mark as done'}"></button>
             <div class="todo-content">
-                <input type="text" class="todo-input-edit" value="${escapeHtml(todo.text)}" spellcheck="false" maxlength="240" aria-label="Task text">
+                <input type="text" class="todo-input-edit" name="task-text" value="${escapeHtml(todo.text)}" spellcheck="false" maxlength="240" autocomplete="one-time-code" aria-label="Task text" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
                 <div class="todo-tags">${tagsHtml}</div>
             </div>
             <div class="todo-actions">
