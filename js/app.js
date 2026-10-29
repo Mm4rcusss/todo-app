@@ -295,6 +295,125 @@ document.addEventListener('DOMContentLoaded', () => {
         undoTimer = setTimeout(hideToast, 4000);
     }
 
+    let conflictResolver = null;
+    let manualSyncBusy = false;
+
+    function formatDiffLines(items, emptyLabel) {
+        if (!items?.length) return `<li class="sync-diff-empty">${emptyLabel}</li>`;
+        return items.slice(0, 12).map((item) => {
+            const kind = item.kind === 'list' ? 'List' : 'Task';
+            const label = String(item.label || item.id || '').replace(/[<>&]/g, (ch) => (
+                ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[ch]
+            ));
+            return `<li><span class="sync-diff-kind">${kind}</span> ${label}</li>`;
+        }).join('') + (items.length > 12 ? `<li class="sync-diff-empty">…and ${items.length - 12} more</li>` : '');
+    }
+
+    async function requestManualSync(options = {}) {
+        if (manualSyncBusy) return;
+        const headerBtn = document.getElementById('header-sync-btn');
+        const status = options.fromAccount ? document.getElementById('account-status') : null;
+        manualSyncBusy = true;
+        if (headerBtn) headerBtn.textContent = 'Checking…';
+        if (status) {
+            status.hidden = false;
+            status.classList.remove('sync-error');
+            status.textContent = 'Checking cloud…';
+        }
+        try {
+            const preview = await window.OrbitSync?.previewSync?.();
+            if (!preview) {
+                showNotice('Cloud sync is not available.');
+                return;
+            }
+            if (preview.empty) {
+                showNotice('Already in sync.');
+                if (status) status.textContent = 'Already in sync.';
+                return;
+            }
+            const addedEl = document.getElementById('sync-preview-added');
+            const deletedEl = document.getElementById('sync-preview-deleted');
+            const changedEl = document.getElementById('sync-preview-changed');
+            if (addedEl) addedEl.innerHTML = formatDiffLines(preview.added, 'Nothing new from cloud');
+            if (deletedEl) deletedEl.innerHTML = formatDiffLines(preview.deleted, 'Nothing will be removed');
+            if (changedEl) changedEl.innerHTML = formatDiffLines(preview.changed, 'No changed items');
+            openModal(document.getElementById('sync-preview-modal'));
+            if (status) status.textContent = 'Review sync changes.';
+        } catch (err) {
+            const message = err?.message || window.OrbitSync?.lastError?.() || 'Could not check sync.';
+            showNotice(message);
+            if (status) {
+                status.classList.add('sync-error');
+                status.textContent = message;
+            }
+        } finally {
+            manualSyncBusy = false;
+            if (headerBtn) headerBtn.textContent = 'Sync';
+        }
+    }
+
+    async function confirmManualSync() {
+        const modal = document.getElementById('sync-preview-modal');
+        const confirmBtn = document.getElementById('sync-preview-confirm');
+        const headerBtn = document.getElementById('header-sync-btn');
+        if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Syncing…';
+        }
+        if (headerBtn) headerBtn.textContent = 'Syncing…';
+        try {
+            await window.OrbitSync?.syncNow?.();
+            closeModal(modal);
+            refreshAccountUi();
+            showNotice('Synced.');
+        } catch (err) {
+            showNotice(err?.message || window.OrbitSync?.lastError?.() || 'Sync failed.');
+        } finally {
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Confirm sync';
+            }
+            if (headerBtn) headerBtn.textContent = 'Sync';
+        }
+    }
+
+    function resolveConflictPrompt(choice) {
+        const resolver = conflictResolver;
+        conflictResolver = null;
+        closeModal(document.getElementById('sync-conflict-modal'));
+        resolver?.(choice);
+    }
+
+    function askSyncConflict(conflict) {
+        return new Promise((resolve) => {
+            conflictResolver = resolve;
+            const title = document.getElementById('sync-conflict-title');
+            const message = document.getElementById('sync-conflict-message');
+            const localPreview = document.getElementById('sync-conflict-local-preview');
+            const remotePreview = document.getElementById('sync-conflict-remote-preview');
+            const bothBtn = document.getElementById('sync-conflict-both');
+            const kind = conflict?.kind === 'list' ? 'list' : 'task';
+            if (title) title.textContent = kind === 'list' ? 'List conflict' : 'Task conflict';
+            if (message) {
+                message.textContent = kind === 'list'
+                    ? 'This list was edited on two devices. Choose which version to keep.'
+                    : 'This task was edited on two devices. Choose which version to keep.';
+            }
+            if (localPreview) {
+                localPreview.textContent = kind === 'list'
+                    ? (conflict.local?.name || 'This device')
+                    : `${conflict.local?.completed ? '✓ ' : ''}${conflict.local?.text || 'This device'}`;
+            }
+            if (remotePreview) {
+                remotePreview.textContent = kind === 'list'
+                    ? (conflict.remote?.name || 'Other device')
+                    : `${conflict.remote?.completed ? '✓ ' : ''}${conflict.remote?.text || 'Other device'}`;
+            }
+            if (bothBtn) bothBtn.hidden = kind !== 'task';
+            openModal(document.getElementById('sync-conflict-modal'));
+        });
+    }
+
     function showUndo(message, restore) {
         undoAction = restore;
         toastMessage.textContent = message;
@@ -545,6 +664,9 @@ document.addEventListener('DOMContentLoaded', () => {
             localStorage.removeItem('orbit_known_lists');
             localStorage.removeItem('orbit_known_groups');
         } catch { /* ignore */ }
+        // Session tombstones survive localStorage clears and used to veto the
+        // home list / cloud tasks after sign-in. Clear them with the guest wipe.
+        window.OrbitSync?.clearLocalTombs?.();
         for (const id of oldThemeIds) {
             try { await wallpaperDel(id); } catch { /* ignore */ }
         }
@@ -557,10 +679,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function ensureLiveDefault() {
-        if (state.settings.syncMode === 'off' || state.settings.syncMode === 'push') return;
-        state.settings.syncMode = 'live';
-        applySyncSettingsUi();
-        writeLocalState();
+        // Off stays off. One-time migrate legacy Upload-only leftovers (old
+        // default) so signed-in devices actually pull + subscribe to Realtime.
+        if (state.settings.syncMode === 'off') return;
+        let migrated = false;
+        try { migrated = localStorage.getItem('orbit_force_live_v1') === '1'; } catch { migrated = false; }
+        if (!migrated && state.settings.syncMode === 'push') {
+            state.settings.syncMode = 'live';
+            try { localStorage.setItem('orbit_force_live_v1', '1'); } catch { /* ignore */ }
+            applySyncSettingsUi();
+            writeLocalState();
+            return;
+        }
+        if (state.settings.syncMode !== 'push' && state.settings.syncMode !== 'live') {
+            state.settings.syncMode = 'live';
+            applySyncSettingsUi();
+            writeLocalState();
+        }
     }
 
     function loginChipConfig() {
@@ -4271,6 +4406,7 @@ document.addEventListener('DOMContentLoaded', () => {
             wallpaperPut,
             wipeGuestLocal,
             ensureLiveDefault,
+            onConflicts: (conflict) => askSyncConflict(conflict),
             onWallpaperError: (message) => {
                 setWallpaperStatus(message || 'Wallpaper upload failed.');
             },
@@ -4585,25 +4721,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 setAccountNote(authNote(err, 'Could not send that link.'), true);
             }
         });
-        document.getElementById('account-sync-btn')?.addEventListener('click', async () => {
-            const status = document.getElementById('account-status');
-            if (status) {
-                status.hidden = false;
-                status.classList.remove('sync-error');
-                status.textContent = 'Syncing…';
-            }
-            await window.OrbitSync?.syncNow?.();
-            refreshAccountUi();
+        document.getElementById('account-sync-btn')?.addEventListener('click', () => {
+            void requestManualSync({ fromAccount: true });
         });
-        const syncNow = async () => {
-            const btn = document.getElementById('header-sync-btn');
-            if (btn) btn.textContent = 'Syncing…';
-            await window.OrbitSync?.syncNow?.();
-            if (btn) btn.textContent = 'Sync';
-            refreshAccountUi();
-            showNotice('Synced.');
-        };
-        document.getElementById('header-sync-btn')?.addEventListener('click', syncNow);
+        document.getElementById('header-sync-btn')?.addEventListener('click', () => {
+            void requestManualSync();
+        });
+        document.getElementById('sync-preview-cancel')?.addEventListener('click', () => {
+            closeModal(document.getElementById('sync-preview-modal'));
+        });
+        document.getElementById('sync-preview-confirm')?.addEventListener('click', () => {
+            void confirmManualSync();
+        });
+        document.getElementById('sync-conflict-local')?.addEventListener('click', () => {
+            resolveConflictPrompt('local');
+        });
+        document.getElementById('sync-conflict-remote')?.addEventListener('click', () => {
+            resolveConflictPrompt('remote');
+        });
+        document.getElementById('sync-conflict-both')?.addEventListener('click', () => {
+            resolveConflictPrompt('both');
+        });
         const copyInvite = async (listId, status) => {
             if (!listId) {
                 showNotice('Create a list first.');
@@ -4689,7 +4827,7 @@ document.addEventListener('DOMContentLoaded', () => {
             hideToast();
         });
 
-        [themeModal, prefsModal, confirmModal, inputModal, settingsModal, document.getElementById('tag-modal'), document.getElementById('backup-import-modal')].forEach((modal) => {
+        [themeModal, prefsModal, confirmModal, inputModal, settingsModal, document.getElementById('tag-modal'), document.getElementById('backup-import-modal'), document.getElementById('sync-preview-modal'), document.getElementById('sync-conflict-modal')].forEach((modal) => {
             if (!modal) return;
             modal.addEventListener('click', (e) => {
                 if (e.target !== modal) return;
@@ -4699,6 +4837,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else if (modal === inputModal) {
                     closeModal(modal);
                     finishDialog(null);
+                } else if (modal === document.getElementById('sync-conflict-modal')) {
+                    resolveConflictPrompt('local');
                 } else {
                     closeModal(modal);
                 }

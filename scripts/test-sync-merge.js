@@ -18,7 +18,17 @@ if (!sync?._test) {
     throw new Error('OrbitSync._test helpers were not exported');
 }
 
-const { filterPulledLists, filterPulledGroups, filterPulledTasks, listIsDeleted, groupIsDeleted, taskIsDeleted, mergeById } = sync._test;
+const {
+    filterPulledLists,
+    filterPulledGroups,
+    filterPulledTasks,
+    listIsDeleted,
+    groupIsDeleted,
+    taskIsDeleted,
+    mergeById,
+    threeWayTask,
+    summarizeSyncDiff
+} = sync._test;
 
 let failed = 0;
 function assert(name, condition) {
@@ -318,6 +328,61 @@ assert(
 );
 sync.forgetDeletedTask('task-a');
 assert('restore: task tombstone cleared', !sync.deletedTaskIds().includes('task-a'));
+
+const baseTask = {
+    id: 't1',
+    text: 'Buy milk',
+    completed: false,
+    date: '',
+    listId: 'home',
+    order: 0,
+    tags: [],
+    updatedAt: '2026-01-01T00:00:00.000Z'
+};
+const localOnlyComplete = {
+    ...baseTask,
+    completed: true,
+    updatedAt: '2026-01-02T00:00:00.000Z'
+};
+const remoteOnlyText = {
+    ...baseTask,
+    text: 'Buy oat milk',
+    updatedAt: '2026-01-02T01:00:00.000Z'
+};
+const autoMerge = threeWayTask(localOnlyComplete, remoteOnlyText, baseTask);
+assert('task: non-overlapping field edits merge automatically', Boolean(autoMerge.value)
+    && autoMerge.value.completed === true
+    && autoMerge.value.text === 'Buy oat milk'
+    && !autoMerge.conflict);
+
+const localText = { ...baseTask, text: 'Buy almond milk', updatedAt: '2026-01-03T00:00:00.000Z' };
+const remoteText = { ...baseTask, text: 'Buy soy milk', updatedAt: '2026-01-03T00:00:01.000Z' };
+const conflictMerge = threeWayTask(localText, remoteText, baseTask);
+assert('task: same-field divergence becomes a conflict', Boolean(conflictMerge.conflict)
+    && conflictMerge.conflict.fields.includes('text'));
+
+const diff = summarizeSyncDiff(
+    {
+        lists: [{ id: 'home', name: 'My Tasks' }],
+        tasks: [{ id: 'keep', text: 'Stay', listId: 'home', completed: false }]
+    },
+    [{ id: 'home', name: 'My Tasks' }, { id: 'errands', name: 'Errands' }],
+    [
+        { id: 'keep', text: 'Stay put', listId: 'home', completed: false },
+        { id: 'new', text: 'New task', listId: 'home', completed: false }
+    ]
+);
+assert('diff: reports added task/list', diff.added.some((item) => item.id === 'new')
+    && diff.added.some((item) => item.id === 'errands'));
+assert('diff: reports changed task', diff.changed.some((item) => item.id === 'keep'));
+
+if (typeof sync.clearLocalTombs === 'function') {
+    sync.rememberDeleted('ghost-list');
+    sync.rememberDeletedTask('ghost-task');
+    sync.clearLocalTombs();
+    assert('clearLocalTombs: list tombs cleared', sync.deletedListIds().length === 0);
+    assert('clearLocalTombs: task tombs cleared', sync.deletedTaskIds().length === 0);
+}
 
 if (failed) {
     console.error(`\n${failed} check(s) failed`);

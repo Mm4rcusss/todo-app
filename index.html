@@ -522,6 +522,51 @@
         </div>
     </div>
 
+    <div id="sync-preview-modal" class="modal hidden modal-front" role="dialog" aria-modal="true" aria-labelledby="sync-preview-title">
+        <div class="modal-content sync-preview-content">
+            <h3 id="sync-preview-title">Confirm sync</h3>
+            <p class="setting-hint">Review what Sync will change on this device. Cancel keeps your current lists as they are.</p>
+            <div class="sync-diff-block">
+                <strong>Will add</strong>
+                <ul id="sync-preview-added" class="sync-diff-list"></ul>
+            </div>
+            <div class="sync-diff-block">
+                <strong>Will remove</strong>
+                <ul id="sync-preview-deleted" class="sync-diff-list"></ul>
+            </div>
+            <div class="sync-diff-block">
+                <strong>Will update</strong>
+                <ul id="sync-preview-changed" class="sync-diff-list"></ul>
+            </div>
+            <div class="modal-actions">
+                <button type="button" id="sync-preview-cancel" class="btn-secondary">Cancel</button>
+                <button type="button" id="sync-preview-confirm" class="btn-primary">Confirm sync</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="sync-conflict-modal" class="modal hidden modal-front" role="dialog" aria-modal="true" aria-labelledby="sync-conflict-title">
+        <div class="modal-content sync-conflict-content">
+            <h3 id="sync-conflict-title">Sync conflict</h3>
+            <p id="sync-conflict-message" class="setting-hint">This item was edited on two devices.</p>
+            <div class="sync-conflict-versions">
+                <div class="sync-conflict-card">
+                    <span class="sync-diff-kind">This device</span>
+                    <p id="sync-conflict-local-preview"></p>
+                </div>
+                <div class="sync-conflict-card">
+                    <span class="sync-diff-kind">Other device</span>
+                    <p id="sync-conflict-remote-preview"></p>
+                </div>
+            </div>
+            <div class="modal-actions sync-conflict-actions">
+                <button type="button" id="sync-conflict-local" class="btn-secondary">Keep this device</button>
+                <button type="button" id="sync-conflict-remote" class="btn-secondary">Keep other device</button>
+                <button type="button" id="sync-conflict-both" class="btn-primary">Keep both</button>
+            </div>
+        </div>
+    </div>
+
     <div id="confirm-modal" class="modal hidden modal-front" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <div class="modal-content">
             <h3 id="confirm-title">Confirm Action</h3>
