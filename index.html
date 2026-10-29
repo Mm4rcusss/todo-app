@@ -235,6 +235,16 @@
                 <p class="account-signed-badge">Signed in</p>
                 <p id="account-email-label" class="setting-hint"></p>
                 <button type="button" id="account-sync-btn" class="settings-link">Sync now</button>
+                <form id="account-change-password-form" class="setting-group" autocomplete="off" onsubmit="return false;">
+                    <p class="setting-hint">Change your password. Enter your current password first.</p>
+                    <label for="account-current-password">Current password</label>
+                    <input type="password" id="account-current-password" name="current-password" class="modal-input" placeholder="Current password" autocomplete="current-password">
+                    <label for="account-new-password">New password</label>
+                    <input type="password" id="account-new-password" name="new-password" class="modal-input" placeholder="New password" autocomplete="new-password">
+                    <label for="account-confirm-password">Confirm new password</label>
+                    <input type="password" id="account-confirm-password" name="confirm-password" class="modal-input" placeholder="Confirm new password" autocomplete="new-password">
+                    <button type="button" id="account-change-password-btn" class="btn-primary">Change password</button>
+                </form>
                 <button type="button" id="account-signout-btn" class="settings-link">Sign out</button>
             </div>
             <p id="account-status" class="theme-upload-status" hidden></p>

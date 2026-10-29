@@ -1774,6 +1774,30 @@
             if (!sb) return;
             await sb.auth.signOut();
         },
+        async changePassword(currentPassword, newPassword) {
+            const sb = await getClient();
+            if (!sb) throw new Error('Cloud sync is not configured.');
+            const user = await sessionUser();
+            if (!user?.email) throw new Error('Sign in first.');
+            const current = String(currentPassword || '');
+            const next = String(newPassword || '');
+            if (!current) throw new Error('Enter your current password.');
+            if (next.length < 6) throw new Error('New password needs at least 6 characters.');
+            // Re-auth with the current password before updating — not a reset flow.
+            const { error: reauthError } = await sb.auth.signInWithPassword({
+                email: user.email,
+                password: current
+            });
+            if (reauthError) {
+                const text = `${reauthError.message || ''} ${reauthError.code || ''}`;
+                if (/invalid.?login|invalid.?credentials|wrong.?password|email.*password/i.test(text)) {
+                    throw new Error('Current password is incorrect.');
+                }
+                throw reauthError;
+            }
+            const { error } = await sb.auth.updateUser({ password: next });
+            if (error) throw error;
+        },
         schedulePush,
         async syncNow() {
             if (syncPrefs().mode === 'off') return;
