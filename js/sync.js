@@ -27,6 +27,12 @@
     const sessionTaskTombs = new Set();
     let pullBlocked = false;
     let cachedUserId = null;
+    let suppressSignedInWipe = false;
+    let baseTasks = new Map();
+    let baseLists = new Map();
+    let pendingConflicts = [];
+    let conflictAskChain = Promise.resolve();
+    const FORCE_LIVE_KEY = 'orbit_force_live_v1';
 
     function loadStoredIds(key) {
         try {
@@ -207,6 +213,26 @@
         else list.forEach((id) => rememberDeleted(id));
     }
 
+    function clearLocalTombs() {
+        sessionListTombs.clear();
+        sessionGroupTombs.clear();
+        sessionTaskTombs.clear();
+        try {
+            localStorage.removeItem(TOMBSTONE_KEY);
+            localStorage.removeItem(GROUP_TOMBSTONE_KEY);
+            localStorage.removeItem(TASK_TOMBSTONE_KEY);
+            localStorage.removeItem(KNOWN_LISTS_KEY);
+            localStorage.removeItem(KNOWN_GROUPS_KEY);
+        } catch { /* ignore */ }
+        const state = hooks.getState?.();
+        if (state) {
+            state.deletedListIds = [];
+            state.deletedGroupIds = [];
+            state.deletedTaskIds = [];
+        }
+        pullBlocked = false;
+    }
+
     function runLocalMigration() {
         let ver = 0;
         try { ver = Number(localStorage.getItem(SYNC_MIGRATION_KEY) || 0) || 0; } catch { ver = 0; }
@@ -312,45 +338,340 @@
         return Boolean(rowDeletedAt(row));
     }
 
+    function cloneRow(row) {
+        return row ? JSON.parse(JSON.stringify(row)) : null;
+    }
+
+    function fieldEqual(a, b) {
+        return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+    }
+
+    function taskLabel(task) {
+        const text = String(task?.text || '').trim();
+        return text ? (text.length > 48 ? `${text.slice(0, 45)}…` : text) : 'Untitled task';
+    }
+
+    function listLabel(list) {
+        return String(list?.name || 'Untitled list').trim() || 'Untitled list';
+    }
+
+    function rememberBases(snapshot) {
+        baseTasks = new Map();
+        baseLists = new Map();
+        (snapshot?.tasks || []).forEach((task) => {
+            if (task?.id) baseTasks.set(String(task.id), cloneRow(task));
+        });
+        (snapshot?.lists || []).forEach((list) => {
+            if (list?.id) baseLists.set(String(list.id), cloneRow(list));
+        });
+    }
+
     function mergeTaskFields(local, remote) {
-        if (!local) return remote;
-        if (!remote) return local;
-        const localStamp = stamp(local.updatedAt);
-        const remoteStamp = stamp(remote.updatedAt);
-        if (remoteStamp > localStamp) {
+        const merged = threeWayTask(local, remote, baseTasks.get(String(local?.id || remote?.id || '')));
+        if (merged.conflict) return local || remote;
+        return merged.value;
+    }
+
+    function threeWayTask(local, remote, base) {
+        if (!local) return { value: remote };
+        if (!remote) return { value: local };
+        const id = String(local.id || remote.id);
+        const baseRow = base || baseTasks.get(id) || null;
+        const fields = ['text', 'completed', 'date', 'listId', 'order'];
+        if (!baseRow) {
+            if (fields.every((f) => fieldEqual(local[f], remote[f])) && fieldEqual(local.tags, remote.tags)) {
+                return { value: newer(local, remote) };
+            }
+            if (stamp(local.updatedAt) !== stamp(remote.updatedAt)) {
+                // First contact without a base: prefer newer whole row.
+                return { value: newer(local, remote) };
+            }
             return {
-                ...local,
-                ...remote,
-                text: remote.text,
-                completed: remote.completed,
-                date: remote.date,
-                tags: remote.tags,
-                order: remote.order,
-                updatedAt: remote.updatedAt
+                conflict: {
+                    kind: 'task',
+                    id,
+                    local: cloneRow(local),
+                    remote: cloneRow(remote),
+                    fields: fields.filter((f) => !fieldEqual(local[f], remote[f])).concat(
+                        fieldEqual(local.tags, remote.tags) ? [] : ['tags']
+                    )
+                }
             };
         }
-        if (localStamp > remoteStamp) {
+        const next = { ...baseRow, ...local, id: local.id };
+        const conflictFields = [];
+        fields.forEach((field) => {
+            const lv = local[field];
+            const rv = remote[field];
+            const bv = baseRow[field];
+            if (fieldEqual(lv, rv)) next[field] = lv;
+            else if (fieldEqual(lv, bv)) next[field] = rv;
+            else if (fieldEqual(rv, bv)) next[field] = lv;
+            else conflictFields.push(field);
+        });
+        const lt = local.tags || [];
+        const rt = remote.tags || [];
+        const bt = baseRow.tags || [];
+        if (fieldEqual(lt, rt)) next.tags = lt;
+        else if (fieldEqual(lt, bt)) next.tags = rt;
+        else if (fieldEqual(rt, bt)) next.tags = lt;
+        else conflictFields.push('tags');
+        if (conflictFields.length) {
             return {
-                ...remote,
-                ...local,
-                text: local.text,
-                completed: local.completed,
-                date: local.date,
-                tags: local.tags,
-                order: local.order,
-                updatedAt: local.updatedAt
+                conflict: {
+                    kind: 'task',
+                    id,
+                    local: cloneRow(local),
+                    remote: cloneRow(remote),
+                    fields: conflictFields
+                }
             };
         }
-        return {
-            ...local,
-            text: local.text,
-            completed: local.completed,
-            date: local.date || remote.date,
-            tags: Array.isArray(local.tags) && local.tags.length ? local.tags : remote.tags,
-            order: local.order,
-            listId: local.listId || remote.listId,
-            updatedAt: local.updatedAt || remote.updatedAt
-        };
+        next.updatedAt = stamp(local.updatedAt) >= stamp(remote.updatedAt) ? local.updatedAt : remote.updatedAt;
+        return { value: next };
+    }
+
+    function threeWayList(local, remote, base) {
+        if (!local) return { value: remote };
+        if (!remote) return { value: local };
+        const id = String(local.id || remote.id);
+        const baseRow = base || baseLists.get(id) || null;
+        const fields = ['name', 'icon', 'theme', 'color', 'groupId', 'resetFrequency'];
+        if (!baseRow) {
+            if (fields.every((f) => fieldEqual(local[f], remote[f]))) return { value: newer(local, remote) };
+            if (stamp(local.updatedAt) !== stamp(remote.updatedAt)) return { value: newer(local, remote) };
+            return {
+                conflict: {
+                    kind: 'list',
+                    id,
+                    local: cloneRow(local),
+                    remote: cloneRow(remote),
+                    fields: fields.filter((f) => !fieldEqual(local[f], remote[f]))
+                }
+            };
+        }
+        const next = { ...baseRow, ...local, id: local.id, role: local.role || remote.role };
+        const conflictFields = [];
+        fields.forEach((field) => {
+            const lv = local[field];
+            const rv = remote[field];
+            const bv = baseRow[field];
+            if (fieldEqual(lv, rv)) next[field] = lv;
+            else if (fieldEqual(lv, bv)) next[field] = rv;
+            else if (fieldEqual(rv, bv)) next[field] = lv;
+            else conflictFields.push(field);
+        });
+        if (conflictFields.length) {
+            return {
+                conflict: {
+                    kind: 'list',
+                    id,
+                    local: cloneRow(local),
+                    remote: cloneRow(remote),
+                    fields: conflictFields
+                }
+            };
+        }
+        next.updatedAt = stamp(local.updatedAt) >= stamp(remote.updatedAt) ? local.updatedAt : remote.updatedAt;
+        return { value: next };
+    }
+
+    function queueConflict(conflict) {
+        if (!conflict?.id) return;
+        const key = `${conflict.kind}:${conflict.id}`;
+        if (pendingConflicts.some((item) => `${item.kind}:${item.id}` === key)) return;
+        pendingConflicts.push(conflict);
+        scheduleConflictPrompt();
+    }
+
+    function scheduleConflictPrompt() {
+        if (!hooks.onConflicts) return;
+        conflictAskChain = conflictAskChain.then(async () => {
+            while (pendingConflicts.length) {
+                const next = pendingConflicts[0];
+                let choice = 'local';
+                try {
+                    choice = await hooks.onConflicts(next);
+                } catch {
+                    choice = 'local';
+                }
+                await applyConflictChoice(next, choice);
+                pendingConflicts = pendingConflicts.filter((item) => item !== next);
+            }
+        }).catch((err) => console.warn('Orbit conflict prompt', err));
+    }
+
+    async function applyConflictChoice(conflict, choice) {
+        const state = hooks.getState?.();
+        if (!state || !conflict) return;
+        const id = String(conflict.id);
+        if (conflict.kind === 'task') {
+            if (choice === 'remote') {
+                const index = (state.tasks || []).findIndex((task) => String(task.id) === id);
+                const remote = { ...conflict.remote, updatedAt: nowIso() };
+                if (index >= 0) state.tasks[index] = remote;
+                else state.tasks = [...(state.tasks || []), remote];
+                baseTasks.set(id, cloneRow(remote));
+            } else if (choice === 'both') {
+                const copy = {
+                    ...conflict.remote,
+                    id: `task_${crypto.randomUUID()}`,
+                    text: `${conflict.remote.text || 'Task'} (other device)`,
+                    updatedAt: nowIso()
+                };
+                state.tasks = [...(state.tasks || []), copy];
+                const local = {
+                    ...(conflict.local || {}),
+                    updatedAt: nowIso()
+                };
+                const index = (state.tasks || []).findIndex((task) => String(task.id) === id);
+                if (index >= 0) state.tasks[index] = local;
+                baseTasks.set(id, cloneRow(local));
+            } else {
+                const local = { ...(conflict.local || {}), updatedAt: nowIso() };
+                const index = (state.tasks || []).findIndex((task) => String(task.id) === id);
+                if (index >= 0) state.tasks[index] = local;
+                else state.tasks = [...(state.tasks || []), local];
+                baseTasks.set(id, cloneRow(local));
+            }
+        } else if (conflict.kind === 'list') {
+            if (choice === 'remote') {
+                const index = (state.lists || []).findIndex((list) => String(list.id) === id);
+                const remote = { ...conflict.remote, updatedAt: nowIso() };
+                if (index >= 0) state.lists[index] = { ...state.lists[index], ...remote };
+                else state.lists = [...(state.lists || []), remote];
+                baseLists.set(id, cloneRow(remote));
+            } else {
+                const local = { ...(conflict.local || {}), updatedAt: nowIso() };
+                const index = (state.lists || []).findIndex((list) => String(list.id) === id);
+                if (index >= 0) state.lists[index] = { ...state.lists[index], ...local };
+                else state.lists = [...(state.lists || []), local];
+                baseLists.set(id, cloneRow(local));
+            }
+        }
+        hooks.persistLocal?.();
+        hooks.applyCloud?.({
+            lists: state.lists,
+            tasks: state.tasks,
+            tags: state.tags,
+            groups: state.groups,
+            settings: state.settings,
+            bitsParams: state.bitsParams,
+            customThemes: state.customThemes,
+            wallpaperAdjust: state.wallpaperAdjust,
+            currentListId: state.currentListId
+        });
+        await run('push');
+    }
+
+    function mergeTasksWithConflicts(localTasks, remoteTasks) {
+        const map = new Map();
+        (localTasks || []).forEach((task) => {
+            if (task?.id) map.set(String(task.id), { local: task });
+        });
+        (remoteTasks || []).forEach((task) => {
+            const id = String(task.id);
+            const cur = map.get(id) || {};
+            cur.remote = task;
+            map.set(id, cur);
+        });
+        const merged = [];
+        const conflicts = [];
+        map.forEach((pair, id) => {
+            if (!pair.local) {
+                merged.push(pair.remote);
+                return;
+            }
+            if (!pair.remote) {
+                merged.push(pair.local);
+                return;
+            }
+            const result = threeWayTask(pair.local, pair.remote, baseTasks.get(id));
+            if (result.conflict) {
+                conflicts.push(result.conflict);
+                merged.push(pair.local);
+            } else {
+                merged.push(result.value);
+            }
+        });
+        return { merged, conflicts };
+    }
+
+    function mergeListsWithConflicts(localLists, remoteLists) {
+        const map = new Map();
+        (localLists || []).forEach((list) => {
+            if (list?.id) map.set(String(list.id), { local: list });
+        });
+        (remoteLists || []).forEach((list) => {
+            const id = String(list.id);
+            const cur = map.get(id) || {};
+            cur.remote = list;
+            map.set(id, cur);
+        });
+        const merged = [];
+        const conflicts = [];
+        map.forEach((pair, id) => {
+            if (!pair.local) {
+                merged.push(pair.remote);
+                return;
+            }
+            if (!pair.remote) {
+                merged.push(pair.local);
+                return;
+            }
+            const result = threeWayList(pair.local, pair.remote, baseLists.get(id));
+            if (result.conflict) {
+                conflicts.push(result.conflict);
+                merged.push(pair.local);
+            } else {
+                merged.push(result.value);
+            }
+        });
+        return { merged, conflicts };
+    }
+
+    function summarizeSyncDiff(local, remoteLists, remoteTasks) {
+        const localListMap = new Map((local.lists || []).map((list) => [String(list.id), list]));
+        const remoteListMap = new Map((remoteLists || []).map((list) => [String(list.id), list]));
+        const localTaskMap = new Map((local.tasks || []).map((task) => [String(task.id), task]));
+        const remoteTaskMap = new Map((remoteTasks || []).map((task) => [String(task.id), task]));
+        const added = [];
+        const deleted = [];
+        const changed = [];
+
+        remoteListMap.forEach((list, id) => {
+            if (!localListMap.has(id)) added.push({ kind: 'list', id, label: listLabel(list) });
+            else {
+                const localList = localListMap.get(id);
+                if (!fieldEqual(localList.name, list.name) || !fieldEqual(localList.color, list.color)) {
+                    changed.push({ kind: 'list', id, label: listLabel(list) });
+                }
+            }
+        });
+        localListMap.forEach((list, id) => {
+            if (listIsLocalOnly(list)) return;
+            if (!remoteListMap.has(id)) deleted.push({ kind: 'list', id, label: listLabel(list) });
+        });
+
+        remoteTaskMap.forEach((task, id) => {
+            if (!localTaskMap.has(id)) added.push({ kind: 'task', id, label: taskLabel(task) });
+            else {
+                const localTask = localTaskMap.get(id);
+                if (
+                    !fieldEqual(localTask.text, task.text)
+                    || !fieldEqual(localTask.completed, task.completed)
+                    || !fieldEqual(localTask.date, task.date)
+                    || !fieldEqual(localTask.listId, task.listId)
+                ) {
+                    changed.push({ kind: 'task', id, label: taskLabel(task) });
+                }
+            }
+        });
+        localTaskMap.forEach((task, id) => {
+            if (!remoteTaskMap.has(id)) deleted.push({ kind: 'task', id, label: taskLabel(task) });
+        });
+
+        return { added, deleted, changed };
     }
 
     function formatError(err) {
@@ -664,6 +985,7 @@
         if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
             await OrbitSync.consumeInviteFromUrl();
             const user = session?.user || null;
+            const previousUserId = cachedUserId;
             if (user) {
                 cachedUserId = user.id;
                 hooks.ensureLiveDefault?.();
@@ -673,15 +995,27 @@
                 stopLive();
                 stopWallpaperWatch();
             } else if (event === 'SIGNED_IN') {
-                // Real login only — never wipe on INITIAL_SESSION / reload.
-                await hooks.wipeGuestLocal?.();
+                // Real login / account switch only. Skip wipe on password re-auth
+                // (changePassword) and when the same user is already signed in.
+                const sameUser = Boolean(user && previousUserId && previousUserId === user.id);
+                if (!suppressSignedInWipe && !sameUser) {
+                    clearLocalTombs();
+                    await hooks.wipeGuestLocal?.();
+                }
                 if (user) await paintFromUserCache(user.id);
+                // Pull first so an empty local device cannot upload blank over cloud.
                 await run('pull', { force: true });
+                await run('push');
                 await startLive();
                 await startWallpaperWatch();
             } else if (prefsNow.mode === 'live') {
                 if (event === 'INITIAL_SESSION' && user) await paintFromUserCache(user.id);
-                await run(event === 'TOKEN_REFRESHED' ? 'push' : 'both');
+                if (event === 'TOKEN_REFRESHED') {
+                    await run('push');
+                } else {
+                    await run('pull', { force: true });
+                    await run('push');
+                }
                 await startLive();
                 await startWallpaperWatch();
             } else {
@@ -694,6 +1028,9 @@
             stopLive();
             stopWallpaperWatch();
             cachedUserId = null;
+            baseTasks = new Map();
+            baseLists = new Map();
+            pendingConflicts = [];
             hooks.onStatus?.();
         }
         hooks.onAuth?.();
@@ -1084,7 +1421,13 @@
     async function paintFromUserCache(userId) {
         const cached = await loadUserCache(userId);
         if (!cached || !hooks.applyCloud) return false;
+        const listCount = (cached.lists || []).length;
+        const taskCount = (cached.tasks || []).length;
+        // Never paint a blank cache over the live UI — that blocked later pulls
+        // when paired with leftover tombstones / push-first races.
+        if (!listCount && !taskCount) return false;
         hooks.applyCloud(cached);
+        rememberBases(cached);
         return true;
     }
 
@@ -1103,14 +1446,26 @@
                 if (!id) return schedulePull();
                 forgetDeletedTask(id);
                 state.tasks = (state.tasks || []).filter((task) => String(task.id) !== id);
+                baseTasks.delete(id);
             } else if (row) {
                 const next = fromTaskRow(row);
                 if (isSoftDeleted(next)) {
                     state.tasks = (state.tasks || []).filter((task) => String(task.id) !== String(next.id));
+                    baseTasks.delete(String(next.id));
                 } else {
                     const index = (state.tasks || []).findIndex((task) => String(task.id) === String(next.id));
-                    if (index >= 0) state.tasks[index] = mergeTaskFields(state.tasks[index], next);
-                    else state.tasks = [...(state.tasks || []), next];
+                    if (index >= 0) {
+                        const result = threeWayTask(state.tasks[index], next, baseTasks.get(String(next.id)));
+                        if (result.conflict) {
+                            queueConflict(result.conflict);
+                        } else {
+                            state.tasks[index] = result.value;
+                            baseTasks.set(String(next.id), cloneRow(next));
+                        }
+                    } else {
+                        state.tasks = [...(state.tasks || []), next];
+                        baseTasks.set(String(next.id), cloneRow(next));
+                    }
                 }
             } else {
                 return schedulePull();
@@ -1122,14 +1477,26 @@
                 forgetDeleted(id);
                 state.lists = (state.lists || []).filter((list) => String(list.id) !== id);
                 state.tasks = (state.tasks || []).filter((task) => String(task.listId) !== id);
+                baseLists.delete(id);
             } else if (row) {
                 const next = fromListRow(row, 'owner');
                 if (isSoftDeleted(next)) {
                     state.lists = (state.lists || []).filter((list) => String(list.id) !== String(next.id));
+                    baseLists.delete(String(next.id));
                 } else {
                     const index = (state.lists || []).findIndex((list) => String(list.id) === String(next.id));
-                    if (index >= 0) state.lists[index] = newer(next, state.lists[index]);
-                    else state.lists = [...(state.lists || []), next];
+                    if (index >= 0) {
+                        const result = threeWayList(state.lists[index], next, baseLists.get(String(next.id)));
+                        if (result.conflict) {
+                            queueConflict(result.conflict);
+                        } else {
+                            state.lists[index] = result.value;
+                            baseLists.set(String(next.id), cloneRow(next));
+                        }
+                    } else {
+                        state.lists = [...(state.lists || []), next];
+                        baseLists.set(String(next.id), cloneRow(next));
+                    }
                 }
             } else {
                 return schedulePull();
@@ -1249,8 +1616,12 @@
         );
         const contentPrefs = syncPrefs();
 
+        const listMerge = contentPrefs.lists
+            ? mergeListsWithConflicts(live.lists || [], remoteLists)
+            : { merged: [...(live.lists || [])], conflicts: [] };
+        listMerge.conflicts.forEach(queueConflict);
         const lists = contentPrefs.lists
-            ? filterPulledLists(mergeById(live.lists || [], remoteLists), {
+            ? filterPulledLists(listMerge.merged, {
                 tombs: deletedLists,
                 idsAtStart,
                 liveIds,
@@ -1258,12 +1629,16 @@
                 localOnlyIds,
                 serverDeletedIds: serverDeletedLists
             })
-            : [...(live.lists || [])];
+            : listMerge.merged;
 
         const remoteTaskIds = new Set(remoteTasks.map((task) => String(task.id)));
         const listIds = new Set(lists.map((list) => String(list.id)));
+        const taskMerge = contentPrefs.lists
+            ? mergeTasksWithConflicts(live.tasks || [], remoteTasks)
+            : { merged: [...(live.tasks || [])], conflicts: [] };
+        taskMerge.conflicts.forEach(queueConflict);
         const tasks = contentPrefs.lists
-            ? filterPulledTasks(mergeById(live.tasks || [], remoteTasks, mergeTaskFields), {
+            ? filterPulledTasks(taskMerge.merged, {
                 tombs: deleted,
                 idsAtStart: taskIdsAtStart,
                 liveIds: liveTaskIds,
@@ -1277,7 +1652,7 @@
                 if (remoteTaskIds.has(id)) return true;
                 return !previousSync || stamp(task.updatedAt) >= stamp(previousSync);
             })
-            : [...(live.tasks || [])].filter((task) => !taskIsDeleted(task.id, deleted));
+            : taskMerge.merged.filter((task) => !taskIsDeleted(task.id, deleted));
         const tags = mergeById(live.tags || [], remoteTags);
         const groups = contentPrefs.groups
             ? filterPulledGroups(mergeById(live.groups || [], remoteGroups), {
@@ -1391,8 +1766,41 @@
             currentListId: cloudState.currentListId
         };
         hooks.applyCloud(snapshot);
+        rememberBases(snapshot);
         void saveUserCache(user.id, snapshot);
         await syncWallpaperMedia();
+    }
+
+    async function fetchRemoteSyncSnapshot() {
+        const sb = await getClient();
+        const user = await sessionUser();
+        if (!sb || !user || !hooks.getState) return null;
+        const local = hooks.getState();
+        if (ensureHomeListId(local, user.id) || ensureDefaultTagIds(local, user.id)) hooks.persistLocal?.();
+        const [listsRes, membersRes, tasksRes] = await Promise.all([
+            sb.from('lists').select('*'),
+            sb.from('list_members').select('list_id, role, user_id').eq('user_id', user.id),
+            sb.from('tasks').select('*')
+        ]);
+        const err = listsRes.error || membersRes.error || tasksRes.error;
+        if (err) throw err;
+        const roleByList = {};
+        (membersRes.data || []).forEach((row) => {
+            roleByList[row.list_id] = row.role;
+        });
+        const deletedLists = expandTombs(local, user.id);
+        const remoteLists = (listsRes.data || [])
+            .map((row) => fromListRow(row, roleByList[row.id] || 'editor'))
+            .filter((list) => !isSoftDeleted(list) && !listIsDeleted(list.id, deletedLists));
+        const remoteTasks = (tasksRes.data || [])
+            .map(fromTaskRow)
+            .filter((task) => !isSoftDeleted(task) && !taskIsDeleted(task.id, taskTombstoneSet(local)));
+        return {
+            local,
+            remoteLists,
+            remoteTasks,
+            diff: summarizeSyncDiff(local, remoteLists, remoteTasks)
+        };
     }
 
     async function push() {
@@ -1656,6 +2064,7 @@
         rememberDeletedTask,
         forgetDeletedTask,
         noteLocalDelete,
+        clearLocalTombs,
         listIsDeleted,
         groupIsDeleted,
         taskIsDeleted,
@@ -1697,7 +2106,12 @@
             listIsDeleted,
             groupIsDeleted,
             taskIsDeleted,
-            mergeById
+            mergeById,
+            threeWayTask,
+            threeWayList,
+            summarizeSyncDiff,
+            mergeTasksWithConflicts,
+            mergeListsWithConflicts
         },
         async user() {
             return sessionUser();
@@ -1734,8 +2148,13 @@
                 cachedUserId = user.id;
                 hooks.ensureLiveDefault?.();
                 await paintFromUserCache(user.id);
-                await startLive();
-                await startWallpaperWatch();
+                // Always pull on boot so a second device (or empty cache paint)
+                // receives cloud todos even if INITIAL_SESSION races.
+                if (syncPrefs().mode !== 'off') {
+                    await run('pull', { force: true });
+                    if (syncPrefs().mode === 'live') await startLive();
+                    await startWallpaperWatch();
+                }
             }
             hooks.onStatus?.();
             hooks.onAuth?.();
@@ -1784,25 +2203,47 @@
             if (!current) throw new Error('Enter your current password.');
             if (next.length < 6) throw new Error('New password needs at least 6 characters.');
             // Re-auth with the current password before updating — not a reset flow.
-            const { error: reauthError } = await sb.auth.signInWithPassword({
-                email: user.email,
-                password: current
-            });
-            if (reauthError) {
-                const text = `${reauthError.message || ''} ${reauthError.code || ''}`;
-                if (/invalid.?login|invalid.?credentials|wrong.?password|email.*password/i.test(text)) {
-                    throw new Error('Current password is incorrect.');
+            // signInWithPassword emits SIGNED_IN; suppress guest wipe for that event.
+            suppressSignedInWipe = true;
+            try {
+                const { error: reauthError } = await sb.auth.signInWithPassword({
+                    email: user.email,
+                    password: current
+                });
+                if (reauthError) {
+                    const text = `${reauthError.message || ''} ${reauthError.code || ''}`;
+                    if (/invalid.?login|invalid.?credentials|wrong.?password|email.*password/i.test(text)) {
+                        throw new Error('Current password is incorrect.');
+                    }
+                    throw reauthError;
                 }
-                throw reauthError;
+                const { error } = await sb.auth.updateUser({ password: next });
+                if (error) throw error;
+            } finally {
+                global.setTimeout(() => { suppressSignedInWipe = false; }, 0);
             }
-            const { error } = await sb.auth.updateUser({ password: next });
-            if (error) throw error;
         },
         schedulePush,
+        async previewSync() {
+            if (syncPrefs().mode === 'off') {
+                return { added: [], deleted: [], changed: [], empty: true };
+            }
+            const snapshot = await fetchRemoteSyncSnapshot();
+            if (!snapshot) return { added: [], deleted: [], changed: [], empty: true };
+            const { added, deleted, changed } = snapshot.diff;
+            return {
+                added,
+                deleted,
+                changed,
+                empty: !added.length && !deleted.length && !changed.length
+            };
+        },
         async syncNow() {
             if (syncPrefs().mode === 'off') return;
             pullBlocked = false;
-            await run('both', { force: true });
+            // Manual sync: pull first so cloud wins for missing local rows, then push.
+            await run('pull', { force: true });
+            await run('push');
         },
         async pushNow() {
             await run('push');
