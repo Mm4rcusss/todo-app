@@ -4632,6 +4632,42 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('header-invite-btn')?.addEventListener('click', () => {
             copyInvite(state.currentListId);
         });
+        document.getElementById('account-change-password-btn')?.addEventListener('click', async () => {
+            const current = document.getElementById('account-current-password')?.value || '';
+            const next = document.getElementById('account-new-password')?.value || '';
+            const confirm = document.getElementById('account-confirm-password')?.value || '';
+            if (!current) {
+                setAccountNote('Enter your current password.', true);
+                return;
+            }
+            if (next.length < 6) {
+                setAccountNote('New password needs at least 6 characters.', true);
+                return;
+            }
+            if (next !== confirm) {
+                setAccountNote('New password and confirmation do not match.', true);
+                return;
+            }
+            if (next === current) {
+                setAccountNote('Pick a new password that is different from the current one.', true);
+                return;
+            }
+            try {
+                await window.OrbitSync.changePassword(current, next);
+                const currentEl = document.getElementById('account-current-password');
+                const nextEl = document.getElementById('account-new-password');
+                const confirmEl = document.getElementById('account-confirm-password');
+                if (currentEl) currentEl.value = '';
+                if (nextEl) nextEl.value = '';
+                if (confirmEl) confirmEl.value = '';
+                setAccountNote('Password updated.');
+            } catch (err) {
+                setAccountNote(authNote(err, 'Could not change password.'), true);
+            }
+        });
+        document.getElementById('account-confirm-password')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') document.getElementById('account-change-password-btn')?.click();
+        });
         document.getElementById('account-signout-btn')?.addEventListener('click', async () => {
             await window.OrbitSync?.signOut();
             refreshAccountUi();
