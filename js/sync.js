@@ -1580,7 +1580,6 @@
         if (err) throw err;
 
         const live = hooks.getState() || local;
-        const previousSync = lastSyncAt;
         const roleByList = {};
         (membersRes.data || []).forEach((row) => {
             roleByList[row.list_id] = row.role;
