@@ -278,8 +278,11 @@
             if (localOnlyIds?.has(id)) return liveIds.has(id);
             if (idsAtStart.has(id) && !liveIds.has(id)) return false;
             if (remoteIds.has(id)) return true;
+            // Shared editor copies vanish when membership ends.
             if (list.role === 'editor') return false;
-            return !list.ownerId;
+            // Keep unsynced local lists (including owned home_*) so a live pull
+            // cannot wipe a list that has not uploaded yet — and take its tasks.
+            return liveIds.has(id);
         });
     }
 
@@ -635,6 +638,8 @@
         const remoteListMap = new Map((remoteLists || []).map((list) => [String(list.id), list]));
         const localTaskMap = new Map((local.tasks || []).map((task) => [String(task.id), task]));
         const remoteTaskMap = new Map((remoteTasks || []).map((task) => [String(task.id), task]));
+        const listTombs = tombstoneSet(local);
+        const taskTombs = taskTombstoneSet(local);
         const added = [];
         const deleted = [];
         const changed = [];
@@ -650,7 +655,13 @@
         });
         localListMap.forEach((list, id) => {
             if (listIsLocalOnly(list)) return;
-            if (!remoteListMap.has(id)) deleted.push({ kind: 'list', id, label: listLabel(list) });
+            if (remoteListMap.has(id)) return;
+            // Local-only list is an upload, not a delete — unless the user tombstoned it.
+            if (listIsDeleted(id, listTombs)) {
+                deleted.push({ kind: 'list', id, label: listLabel(list) });
+            } else {
+                added.push({ kind: 'list', id, label: `${listLabel(list)} (this device)` });
+            }
         });
 
         remoteTaskMap.forEach((task, id) => {
@@ -668,7 +679,13 @@
             }
         });
         localTaskMap.forEach((task, id) => {
-            if (!remoteTaskMap.has(id)) deleted.push({ kind: 'task', id, label: taskLabel(task) });
+            if (remoteTaskMap.has(id)) return;
+            if (taskIsDeleted(id, taskTombs)) {
+                deleted.push({ kind: 'task', id, label: taskLabel(task) });
+            } else {
+                // Just-typed local creates must show as uploads, never as deletes.
+                added.push({ kind: 'task', id, label: `${taskLabel(task)} (this device)` });
+            }
         });
 
         return { added, deleted, changed };
@@ -1648,9 +1665,13 @@
                 const id = String(task.id);
                 if (!listIds.has(String(task.listId)) || listIsDeleted(task.listId, deletedLists)) return false;
                 if (serverDeletedLists.has(String(task.listId))) return false;
+                if (taskIsDeleted(id, deleted) || serverDeletedTasks.has(id)) return false;
                 if (localOnlyIds.has(String(task.listId))) return true;
                 if (remoteTaskIds.has(id)) return true;
-                return !previousSync || stamp(task.updatedAt) >= stamp(previousSync);
+                // Brand-new local creates are often missing from remote until push
+                // finishes. Never drop them on pull — the old previousSync/updatedAt
+                // gate deleted todos while the user was still typing.
+                return liveTaskIds.has(id);
             })
             : taskMerge.merged.filter((task) => !taskIsDeleted(task.id, deleted));
         const tags = mergeById(live.tags || [], remoteTags);
@@ -1705,12 +1726,35 @@
             return listIsLocalOnly(localList) ? localList : list;
         });
         const keptListIds = new Set((cloudState.lists || []).map((list) => String(list.id)));
+        // If a list still exists in the live UI but was dropped from the merge
+        // (e.g. owned local home not yet on the server), put it back so brand-new
+        // tasks on that list are not wiped mid-typing.
+        (fresh.lists || []).forEach((list) => {
+            const id = String(list.id);
+            if (!id || keptListIds.has(id)) return;
+            if (serverDeletedLists.has(id) || listIsDeleted(id, tombsNow)) return;
+            if (listIsLocalOnly(list) || list.role === 'editor') return;
+            cloudState.lists.push(list);
+            keptListIds.add(id);
+        });
         cloudState.tasks = (cloudState.tasks || []).filter((task) => {
             const id = String(task.id);
             if (listIsDeleted(task.listId, tombsNow) || !keptListIds.has(String(task.listId))) return false;
             if (serverDeletedTasks.has(id) || taskIsDeleted(id, taskTombsNow)) return false;
             if (taskIdsAtStart.has(id) && !freshTaskIds.has(id)) return false;
             return true;
+        });
+        const keptTaskIds = new Set((cloudState.tasks || []).map((task) => String(task.id)));
+        (fresh.tasks || []).forEach((task) => {
+            const id = String(task.id);
+            if (!id || keptTaskIds.has(id)) return;
+            if (serverDeletedTasks.has(id) || taskIsDeleted(id, taskTombsNow)) return;
+            if (listIsDeleted(task.listId, tombsNow) || !keptListIds.has(String(task.listId))) return;
+            // Preserve unsynced local creates that appeared during the pull.
+            if (!remoteTaskIds.has(id)) {
+                cloudState.tasks.push(task);
+                keptTaskIds.add(id);
+            }
         });
         const editing = hooks.editingItem?.();
         if (editing?.kind === 'task') {

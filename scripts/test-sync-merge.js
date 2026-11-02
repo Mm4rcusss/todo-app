@@ -376,6 +376,45 @@ assert('diff: reports added task/list', diff.added.some((item) => item.id === 'n
     && diff.added.some((item) => item.id === 'errands'));
 assert('diff: reports changed task', diff.changed.some((item) => item.id === 'keep'));
 
+const typedLocal = {
+    id: 'typed-now',
+    text: 'Just typed',
+    listId: 'home',
+    completed: false,
+    updatedAt: '2020-01-01T00:00:00.000Z'
+};
+assert(
+    'task: unsynced local create survives pull filter even with old updatedAt',
+    ids(pullTasks({
+        live: [{ id: 'keep-task' }, typedLocal],
+        remote: [{ id: 'keep-task' }],
+        tombs: []
+    })) === 'keep-task,typed-now'
+);
+
+assert(
+    'list: unsynced owned local list is kept for its tasks',
+    ids(pullLists({
+        live: [{ id: 'home_abc', name: 'My Tasks', ownerId: 'user-1', role: 'owner' }],
+        remote: [],
+        tombs: []
+    })) === 'home_abc'
+);
+
+const typedDiff = summarizeSyncDiff(
+    {
+        lists: [{ id: 'home', name: 'My Tasks' }],
+        tasks: [{ id: 'typed-now', text: 'Just typed', listId: 'home' }]
+    },
+    [{ id: 'home', name: 'My Tasks' }],
+    []
+);
+assert(
+    'diff: just-typed local task is an upload, not a delete',
+    typedDiff.added.some((item) => item.id === 'typed-now')
+    && !typedDiff.deleted.some((item) => item.id === 'typed-now')
+);
+
 if (typeof sync.clearLocalTombs === 'function') {
     sync.rememberDeleted('ghost-list');
     sync.rememberDeletedTask('ghost-task');
