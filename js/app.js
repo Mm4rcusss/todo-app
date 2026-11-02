@@ -1736,7 +1736,8 @@ document.addEventListener('DOMContentLoaded', () => {
             listId: state.currentListId,
             date: state.currentDate,
             tags: [],
-            order: state.tasks.length
+            order: state.tasks.length,
+            updatedAt: new Date().toISOString()
         });
         saveState();
         todoInput.value = '';
