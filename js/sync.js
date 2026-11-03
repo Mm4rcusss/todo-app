@@ -138,9 +138,10 @@
     function listIsDeleted(id, tombs) {
         const value = String(id || '');
         const blocked = tombs instanceof Set ? tombs : new Set([...(tombs || [])].map(String));
-        if (blocked.has(value)) return true;
-        if (!isHomeListId(value)) return false;
-        return blocked.has('default') || [...blocked].some((item) => item.startsWith('home_'));
+        // Exact id only. A guest tombstone for `default` must not hide the
+        // account home list (`home_<user>`), and one home_* tomb must not hide
+        // every other home list. That cross-match dropped tasks the user never deleted.
+        return blocked.has(value);
     }
 
     function groupIsDeleted(id, tombs) {
@@ -156,12 +157,11 @@
     }
 
     function expandTombs(state, userId) {
-        const blocked = tombstoneSet(state);
-        if (listIsDeleted('default', blocked) || (userId && listIsDeleted(homeListId(userId), blocked))) {
-            blocked.add('default');
-            if (userId) blocked.add(homeListId(userId));
-        }
-        return blocked;
+        // Keep the user id parameter so callers stay stable, but do not copy a
+        // guest `default` tomb onto `home_<user>`. That soft-deleted the account
+        // home list and every task on it.
+        void userId;
+        return tombstoneSet(state);
     }
 
     function expandGroupTombs(state) {
@@ -958,6 +958,12 @@
     }
 
     const AUTH_STORAGE_KEY = 'orbit-todo-auth';
+    const AUTH_BACKUP_DB = 'orbit_auth_backup';
+    const AUTH_BACKUP_STORE = 'kv';
+    // Set only around a password login/signup on this page. A reload restores
+    // the session with SIGNED_IN (current supabase-js) and must not look like
+    // a new login — that wipe deleted tasks that had not uploaded yet.
+    let explicitAuth = false;
 
     function migrateAuthStorage() {
         try {
@@ -972,6 +978,115 @@
         }
     }
 
+    function openAuthBackup() {
+        return new Promise((resolve) => {
+            if (!global.indexedDB) {
+                resolve(null);
+                return;
+            }
+            try {
+                const req = indexedDB.open(AUTH_BACKUP_DB, 1);
+                req.onupgradeneeded = () => {
+                    const db = req.result;
+                    if (!db.objectStoreNames.contains(AUTH_BACKUP_STORE)) {
+                        db.createObjectStore(AUTH_BACKUP_STORE);
+                    }
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => resolve(null);
+            } catch {
+                resolve(null);
+            }
+        });
+    }
+
+    async function authBackupGet(key) {
+        try {
+            const db = await openAuthBackup();
+            if (!db) return null;
+            const value = await new Promise((resolve) => {
+                const tx = db.transaction(AUTH_BACKUP_STORE, 'readonly');
+                const req = tx.objectStore(AUTH_BACKUP_STORE).get(String(key));
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => resolve(null);
+            });
+            db.close?.();
+            return typeof value === 'string' ? value : null;
+        } catch {
+            return null;
+        }
+    }
+
+    async function authBackupSet(key, value) {
+        try {
+            const db = await openAuthBackup();
+            if (!db) return;
+            await new Promise((resolve) => {
+                const tx = db.transaction(AUTH_BACKUP_STORE, 'readwrite');
+                tx.objectStore(AUTH_BACKUP_STORE).put(String(value), String(key));
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+            });
+            db.close?.();
+        } catch {
+            /* ignore quota / private mode */
+        }
+    }
+
+    async function authBackupDel(key) {
+        try {
+            const db = await openAuthBackup();
+            if (!db) return;
+            await new Promise((resolve) => {
+                const tx = db.transaction(AUTH_BACKUP_STORE, 'readwrite');
+                tx.objectStore(AUTH_BACKUP_STORE).delete(String(key));
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+            });
+            db.close?.();
+        } catch {
+            /* ignore */
+        }
+    }
+
+    // localStorage plus an IndexedDB copy. iOS can drop localStorage for an
+    // installed home-screen app while IndexedDB survives; the next launch
+    // reads the copy back and the account stays signed in.
+    const authStorage = {
+        async getItem(key) {
+            try {
+                const local = localStorage.getItem(key);
+                if (local) return local;
+            } catch {
+                /* Safari private mode / locked storage */
+            }
+            const backup = await authBackupGet(key);
+            if (backup) {
+                try { localStorage.setItem(key, backup); } catch { /* ignore */ }
+            }
+            return backup;
+        },
+        async setItem(key, value) {
+            try { localStorage.setItem(key, value); } catch { /* ignore */ }
+            await authBackupSet(key, value);
+        },
+        async removeItem(key) {
+            try { localStorage.removeItem(key); } catch { /* ignore */ }
+            await authBackupDel(key);
+        }
+    };
+
+    async function storedSessionUser() {
+        try {
+            const raw = await authStorage.getItem(AUTH_STORAGE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            return parsed?.user?.id ? parsed.user : null;
+        } catch {
+            return null;
+        }
+    }
+
     async function getClient() {
         if (!isConfigured() || !global.supabase?.createClient) return null;
         if (client) return client;
@@ -982,8 +1097,11 @@
                 autoRefreshToken: true,
                 detectSessionInUrl: true,
                 flowType: 'pkce',
-                storage: global.localStorage,
+                storage: authStorage,
                 storageKey: AUTH_STORAGE_KEY
+                // Do not pass a custom `lock`. Current supabase-js coordinates
+                // refreshes without navigator.locks; supplying `lock` turns the
+                // legacy Web Lock path back on, which hangs getSession on reload.
             }
         });
         return client;
@@ -991,12 +1109,25 @@
 
     async function sessionUser() {
         const sb = await getClient();
-        if (!sb) return null;
+        const stored = await storedSessionUser();
+        if (!sb) return stored;
         // Local persisted session only. Do not call getUser() here: when signed
         // out it returns "Auth session missing!" which was leaking into the
         // account UI, and calling auth APIs inside onAuthStateChange deadlocks.
-        const { data: sessionData } = await sb.auth.getSession();
-        return sessionData?.session?.user || null;
+        try {
+            const pending = sb.auth.getSession();
+            const result = await Promise.race([
+                pending,
+                new Promise((resolve) => { global.setTimeout(() => resolve(null), 4000); })
+            ]);
+            if (result?.data?.session?.user) return result.data.session.user;
+            if (result) return null;
+        } catch {
+            /* fall through to the stored session */
+        }
+        // getSession hung (stuck auth init). The stored session still counts so
+        // the account UI does not flip back to Log in on refresh.
+        return stored;
     }
 
     async function handleAuthEvent(event, session) {
@@ -1013,10 +1144,11 @@
                 stopLive();
                 stopWallpaperWatch();
             } else if (event === 'SIGNED_IN') {
-                // Real login / account switch only. Skip wipe on password re-auth
-                // (changePassword) and when the same user is already signed in.
+                // Real login / account switch only. supabase-js also emits
+                // SIGNED_IN when it restores a stored session on refresh — that
+                // must not wipe local tasks. Skip wipe on password re-auth too.
                 const sameUser = Boolean(user && previousUserId && previousUserId === user.id);
-                if (!suppressSignedInWipe && !sameUser) {
+                if (explicitAuth && !suppressSignedInWipe && !sameUser) {
                     clearLocalTombs();
                     await hooks.wipeGuestLocal?.();
                 }
@@ -1315,6 +1447,28 @@
                 }
             }
 
+            if (String(list.ownerId) !== String(userId)) {
+                const { data: existing, error: readError } = await sb.from('lists')
+                    .select('id, owner_id')
+                    .eq('id', row.id)
+                    .maybeSingle();
+                if (!readError && existing && String(existing.owner_id) === String(userId)) {
+                    list.ownerId = userId;
+                    list.role = 'owner';
+                    const { data: updated, error: updateError } = await sb.from('lists')
+                        .update(row)
+                        .eq('id', row.id)
+                        .eq('owner_id', userId)
+                        .select('id');
+                    if (updateError && !isBlockedWrite(updateError)) throw updateError;
+                    if (!updateError && updated?.length) {
+                        saved.push(list);
+                        hooks.persistLocal?.();
+                        continue;
+                    }
+                }
+            }
+
             const error = await insertListRow(sb, row);
             if (!error) {
                 list.ownerId = userId;
@@ -1322,10 +1476,54 @@
                 saved.push(list);
                 continue;
             }
-            if (!isBlockedWrite(error)) throw error;
+            if (isDuplicateKey(error)) {
+                const adopted = await adoptOrRemapList(sb, state, userId, list, row);
+                if (adopted) {
+                    saved.push(list);
+                    continue;
+                }
+            } else if (!isBlockedWrite(error)) {
+                throw error;
+            }
             throw new Error('Could not save that list id to the cloud. Try again or create a new list.');
         }
         return saved;
+    }
+
+    function isDuplicateKey(err) {
+        const code = String(err?.code || '');
+        const text = `${err?.message || ''} ${err?.details || ''}`;
+        return code === '23505' || /duplicate key/i.test(text);
+    }
+
+    async function adoptOrRemapList(sb, state, userId, list, row) {
+        // The home list id is stable per account, so a second device (or a
+        // retry after a wiped ownerId) inserts a row that already exists.
+        // Adopting it lets the rest of the push — including tasks — continue.
+        // Throwing here used to abort the push before any task was uploaded.
+        const { data, error } = await sb.from('lists')
+            .select('id, owner_id')
+            .eq('id', row.id)
+            .maybeSingle();
+        if (!error && data && String(data.owner_id) === String(userId)) {
+            list.ownerId = userId;
+            list.role = 'owner';
+            hooks.persistLocal?.();
+            return true;
+        }
+        if (error || (data && String(data.owner_id) !== String(userId))) {
+            const nextId = `list_${crypto.randomUUID()}`;
+            remapListId(state, list.id, nextId);
+            const retry = await insertListRow(sb, toListRow(list, userId, null));
+            if (!retry) {
+                list.ownerId = userId;
+                list.role = 'owner';
+                hooks.persistLocal?.();
+                return true;
+            }
+            if (!isBlockedWrite(retry)) throw retry;
+        }
+        return false;
     }
 
     async function softDeleteTombstonedGroups(sb, state, userId) {
@@ -1361,7 +1559,11 @@
     }
 
     async function softDeleteTombstonedTasks(sb, state) {
-        const deletedIds = [...taskTombstoneSet(state)];
+        const liveIds = new Set((state?.tasks || []).map((task) => String(task.id)));
+        // A tombstone for a task that is still on screen is stale (undo, or a
+        // merged deletedTaskIds list). Soft-deleting it would remove a task the
+        // user did not leave deleted.
+        const deletedIds = [...taskTombstoneSet(state)].filter((id) => !liveIds.has(String(id)));
         if (!deletedIds.length) return;
         const stampNow = nowIso();
         const { error } = await sb.from('tasks')
@@ -1554,6 +1756,18 @@
         });
     }
 
+    function rehomeOrphanTask(task, kept, homeId, tombs, serverDeletedLists) {
+        const lid = String(task?.listId || '');
+        if (kept.has(lid) && !serverDeletedLists.has(lid) && !listIsDeleted(lid, tombs)) return true;
+        // A deleted list takes its tasks with it. A missing list id does not —
+        // guest `default` vs `home_<user>` used to drop the task on pull.
+        if (lid && (serverDeletedLists.has(lid) || listIsDeleted(lid, tombs))) return false;
+        if (!homeId || !kept.has(homeId)) return false;
+        if (serverDeletedLists.has(homeId) || listIsDeleted(homeId, tombs)) return false;
+        task.listId = homeId;
+        return true;
+    }
+
     async function pull() {
         const sb = await getClient();
         const user = await sessionUser();
@@ -1673,9 +1887,8 @@
                 serverDeletedIds: serverDeletedTasks
             }).filter((task) => {
                 const id = String(task.id);
-                if (!listIds.has(String(task.listId)) || listIsDeleted(task.listId, deletedLists)) return false;
-                if (serverDeletedLists.has(String(task.listId))) return false;
                 if (taskIsDeleted(id, deleted) || serverDeletedTasks.has(id)) return false;
+                if (!rehomeOrphanTask(task, listIds, homeListId(user.id), deletedLists, serverDeletedLists)) return false;
                 if (localOnlyIds.has(String(task.listId))) return true;
                 if (remoteTaskIds.has(id)) return true;
                 // Brand-new local creates are often missing from remote until push
@@ -1747,10 +1960,11 @@
             cloudState.lists.push(list);
             keptListIds.add(id);
         });
+        const homeIdNow = homeListId(user.id);
         cloudState.tasks = (cloudState.tasks || []).filter((task) => {
             const id = String(task.id);
-            if (listIsDeleted(task.listId, tombsNow) || !keptListIds.has(String(task.listId))) return false;
             if (serverDeletedTasks.has(id) || taskIsDeleted(id, taskTombsNow)) return false;
+            if (!rehomeOrphanTask(task, keptListIds, homeIdNow, tombsNow, serverDeletedLists)) return false;
             if (taskIdsAtStart.has(id) && !freshTaskIds.has(id)) return false;
             return true;
         });
@@ -1759,7 +1973,7 @@
             const id = String(task.id);
             if (!id || keptTaskIds.has(id)) return;
             if (serverDeletedTasks.has(id) || taskIsDeleted(id, taskTombsNow)) return;
-            if (listIsDeleted(task.listId, tombsNow) || !keptListIds.has(String(task.listId))) return;
+            if (!rehomeOrphanTask(task, keptListIds, homeIdNow, tombsNow, serverDeletedLists)) return;
             // Preserve unsynced local creates that appeared during the pull.
             if (!remoteTaskIds.has(id)) {
                 cloudState.tasks.push(task);
@@ -1926,10 +2140,12 @@
                 .in('list_id', editableIds);
             if (taskSelectError) throw taskSelectError;
             const remoteById = new Map((remoteTasks || []).map((row) => [String(row.id), row]));
+            const taskTombsNow = taskTombstoneSet(hooks.getState() || state);
             const toUpsert = localTasks.filter((task) => {
                 const remote = remoteById.get(String(task.id));
                 if (!remote) return true;
-                if (remote.deleted_at) return false;
+                // Undo / restore: the task is back locally, so clear the server soft-delete.
+                if (remote.deleted_at) return !taskIsDeleted(task.id, taskTombsNow);
                 return stamp(task.updatedAt) >= stamp(remote.updated_at);
             });
             if (toUpsert.length) {
@@ -2178,6 +2394,11 @@
                 hooks.onStatus?.();
                 return;
             }
+            // Know the stored user before subscribing. A restored session emits
+            // SIGNED_IN with no prior in-memory id; treating that as a new login
+            // wiped this device's tasks on every refresh.
+            const restoredUser = await storedSessionUser();
+            if (restoredUser?.id) cachedUserId = restoredUser.id;
             // Sync callback must not await auth APIs (getSession/getUser) or the
             // supabase-js auth lock deadlocks and reload looks signed-out.
             sb.auth.onAuthStateChange((event, session) => {
@@ -2225,22 +2446,42 @@
         async signInWithPassword(email, password) {
             const sb = await getClient();
             if (!sb) throw new Error('Cloud sync is not configured.');
-            const { error } = await sb.auth.signInWithPassword({
-                email: String(email || '').trim(),
-                password: String(password || '')
-            });
-            if (error) throw error;
+            explicitAuth = true;
+            try {
+                const { error } = await sb.auth.signInWithPassword({
+                    email: String(email || '').trim(),
+                    password: String(password || '')
+                });
+                if (error) {
+                    explicitAuth = false;
+                    throw error;
+                }
+            } catch (err) {
+                explicitAuth = false;
+                throw err;
+            }
+            global.setTimeout(() => { explicitAuth = false; }, 50);
         },
         async signUpWithPassword(email, password) {
             const sb = await getClient();
             if (!sb) throw new Error('Cloud sync is not configured.');
-            const { data, error } = await sb.auth.signUp({
-                email: String(email || '').trim(),
-                password: String(password || ''),
-                options: { emailRedirectTo: redirectTo() }
-            });
-            if (error) throw error;
-            return data;
+            explicitAuth = true;
+            try {
+                const { data, error } = await sb.auth.signUp({
+                    email: String(email || '').trim(),
+                    password: String(password || ''),
+                    options: { emailRedirectTo: redirectTo() }
+                });
+                if (error) {
+                    explicitAuth = false;
+                    throw error;
+                }
+                global.setTimeout(() => { explicitAuth = false; }, 50);
+                return data;
+            } catch (err) {
+                explicitAuth = false;
+                throw err;
+            }
         },
         async signOut() {
             const sb = await getClient();

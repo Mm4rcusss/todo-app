@@ -401,6 +401,26 @@ assert(
     })) === 'home_abc'
 );
 
+assert(
+    'list: guest default tomb does not hide the account home list',
+    !listIsDeleted('home_abc', new Set(['default']))
+    && ids(pullLists({
+        live: [{ id: 'home_abc', name: 'My Tasks', role: 'owner' }],
+        remote: [{ id: 'home_abc', name: 'My Tasks', role: 'owner' }],
+        tombs: ['default']
+    })) === 'home_abc'
+);
+
+assert(
+    'list: exact home tombstone still hides that list',
+    listIsDeleted('home_abc', new Set(['home_abc']))
+    && ids(pullLists({
+        live: [{ id: 'home_abc', name: 'My Tasks', role: 'owner' }],
+        remote: [{ id: 'home_abc', name: 'My Tasks', role: 'owner' }],
+        tombs: ['home_abc']
+    })) === ''
+);
+
 const typedDiff = summarizeSyncDiff(
     {
         lists: [{ id: 'home', name: 'My Tasks' }],
