@@ -415,6 +415,21 @@ assert(
     && !typedDiff.deleted.some((item) => item.id === 'typed-now')
 );
 
+const phoneDiff = summarizeSyncDiff(
+    {
+        lists: [{ id: 'home', name: 'My Tasks' }],
+        tasks: []
+    },
+    [{ id: 'home', name: 'My Tasks' }],
+    [{ id: 'phone-1', text: 'From phone', listId: 'home', completed: false }]
+);
+assert(
+    'diff: phone task shows as incoming add',
+    phoneDiff.added.some((item) => item.id === 'phone-1')
+    && phoneDiff.added.length > 0
+    && !phoneDiff.deleted.some((item) => item.id === 'phone-1')
+);
+
 if (typeof sync.clearLocalTombs === 'function') {
     sync.rememberDeleted('ghost-list');
     sync.rememberDeletedTask('ghost-task');

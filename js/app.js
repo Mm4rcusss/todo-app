@@ -165,12 +165,42 @@ document.addEventListener('DOMContentLoaded', () => {
         return type === 'interval' || type === 'date' || type === 'range';
     }
 
+    function todayDateKeys() {
+        // Local today plus UTC today so a phone in another timezone can still
+        // surface "today" tasks on this device's Today view.
+        const local = todayLocal();
+        const utc = new Date().toISOString().slice(0, 10);
+        return local === utc ? [local] : [local, utc];
+    }
+
     function visibleTasks() {
+        const todayKeys = new Set(todayDateKeys());
+        const viewingToday = todayKeys.has(state.currentDate);
         return state.tasks.filter((task) => {
             if (!sameId(task.listId, state.currentListId)) return false;
             if (isRecurringList()) return true;
-            return task.date === state.currentDate;
+            if (task.date === state.currentDate) return true;
+            return viewingToday && todayKeys.has(task.date);
         });
+    }
+
+    function revealHiddenSyncedTasks(previousIds) {
+        const listId = state.currentListId;
+        const incoming = (state.tasks || []).filter((task) => (
+            sameId(task.listId, listId)
+            && !previousIds.has(String(task.id))
+        ));
+        if (!incoming.length) return false;
+        const shown = new Set(visibleTasks().map((task) => String(task.id)));
+        const hiddenIncoming = incoming.filter((task) => !shown.has(String(task.id)));
+        if (!hiddenIncoming.length) return false;
+        const newest = hiddenIncoming.slice().sort((a, b) => (
+            (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0)
+        ))[0];
+        if (!newest?.date) return false;
+        state.currentDate = newest.date;
+        state.viewDate = newest.date;
+        return true;
     }
 
     function daysBetween(from, to) {
@@ -227,7 +257,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function openModal(modal) {
+        if (!modal) return;
         modal.classList.remove('hidden');
+        // Force layout so opacity transitions run after display:none → flex.
+        // Without this, the Sync preview can stay invisible on desktop.
+        void modal.offsetWidth;
         requestAnimationFrame(() => modal.classList.add('visible'));
         if (modal === themeModal) setBackgroundPreview(true);
     }
@@ -309,10 +343,46 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('') + (items.length > 12 ? `<li class="sync-diff-empty">…and ${items.length - 12} more</li>` : '');
     }
 
+    function fillSyncPreviewModal(preview) {
+        const addedEl = document.getElementById('sync-preview-added');
+        const deletedEl = document.getElementById('sync-preview-deleted');
+        const changedEl = document.getElementById('sync-preview-changed');
+        const hintEl = document.getElementById('sync-preview-hint');
+        const empty = Boolean(preview?.empty);
+        if (addedEl) {
+            addedEl.innerHTML = formatDiffLines(
+                preview?.added || [],
+                empty ? 'Nothing new — already matches the cloud' : 'Nothing new from cloud'
+            );
+        }
+        if (deletedEl) {
+            deletedEl.innerHTML = formatDiffLines(preview?.deleted || [], 'Nothing will be removed');
+        }
+        if (changedEl) {
+            changedEl.innerHTML = formatDiffLines(preview?.changed || [], 'No changed items');
+        }
+        if (hintEl) {
+            const otherDays = (state.tasks || []).filter((task) => (
+                sameId(task.listId, state.currentListId)
+                && task.date
+                && task.date !== state.currentDate
+            )).length;
+            hintEl.hidden = otherDays === 0;
+            hintEl.textContent = otherDays
+                ? `This list also has ${otherDays} task${otherDays === 1 ? '' : 's'} on other calendar days. Confirm sync, then use the calendar if a phone task still looks missing.`
+                : '';
+        }
+    }
+
     async function requestManualSync(options = {}) {
         if (manualSyncBusy) return;
         const headerBtn = document.getElementById('header-sync-btn');
         const status = options.fromAccount ? document.getElementById('account-status') : null;
+        const modal = document.getElementById('sync-preview-modal');
+        if (!modal) {
+            showNotice('Sync preview is unavailable. Hard refresh and try again.');
+            return;
+        }
         manualSyncBusy = true;
         if (headerBtn) headerBtn.textContent = 'Checking…';
         if (status) {
@@ -321,24 +391,20 @@ document.addEventListener('DOMContentLoaded', () => {
             status.textContent = 'Checking cloud…';
         }
         try {
-            const preview = await window.OrbitSync?.previewSync?.();
-            if (!preview) {
-                showNotice('Cloud sync is not available.');
-                return;
+            const preview = await window.OrbitSync?.previewSync?.() || {
+                added: [],
+                deleted: [],
+                changed: [],
+                empty: true
+            };
+            // Always show the confirm UI on desktop and phone — never toast-only.
+            fillSyncPreviewModal(preview);
+            openModal(modal);
+            if (status) {
+                status.textContent = preview.empty
+                    ? 'Already in sync — confirm to pull/push anyway.'
+                    : 'Review sync changes.';
             }
-            if (preview.empty) {
-                showNotice('Already in sync.');
-                if (status) status.textContent = 'Already in sync.';
-                return;
-            }
-            const addedEl = document.getElementById('sync-preview-added');
-            const deletedEl = document.getElementById('sync-preview-deleted');
-            const changedEl = document.getElementById('sync-preview-changed');
-            if (addedEl) addedEl.innerHTML = formatDiffLines(preview.added, 'Nothing new from cloud');
-            if (deletedEl) deletedEl.innerHTML = formatDiffLines(preview.deleted, 'Nothing will be removed');
-            if (changedEl) changedEl.innerHTML = formatDiffLines(preview.changed, 'No changed items');
-            openModal(document.getElementById('sync-preview-modal'));
-            if (status) status.textContent = 'Review sync changes.';
         } catch (err) {
             const message = err?.message || window.OrbitSync?.lastError?.() || 'Could not check sync.';
             showNotice(message);
@@ -362,6 +428,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (headerBtn) headerBtn.textContent = 'Syncing…';
         try {
+            // Make sure Live is on so the next phone edits keep arriving.
+            if (syncModeValue() !== 'off' && syncModeValue() !== 'live') {
+                await setSyncMode('live');
+            } else {
+                await window.OrbitSync?.applySyncMode?.();
+            }
             await window.OrbitSync?.syncNow?.();
             closeModal(modal);
             refreshAccountUi();
@@ -4293,6 +4365,7 @@ document.addEventListener('DOMContentLoaded', () => {
             : null;
         const localPets = state.settings?.pets;
         const localPetChoice = state.settings?.petChoice;
+        const previousTaskIds = new Set((state.tasks || []).map((task) => String(task.id)));
         const gone = new Set([
             ...(state.deletedListIds || []),
             ...(window.OrbitSync?.deletedListIds?.() || [])
@@ -4316,6 +4389,7 @@ document.addEventListener('DOMContentLoaded', () => {
         state.tasks = (remote.tasks || []).filter((task) => (
             !blocked(task.listId) && !goneTasks.has(String(task.id))
         ));
+        const revealedOtherDay = revealHiddenSyncedTasks(previousTaskIds);
         state.tags = remote.tags;
         state.groups = (remote.groups || []).filter((group) => !blockedGroup(group.id));
         if (remote.settings) {
@@ -4394,6 +4468,9 @@ document.addEventListener('DOMContentLoaded', () => {
         refreshAccountUi();
         applyLoginChip();
         restoreEditor(editor);
+        if (revealedOtherDay) {
+            showNotice('Showing tasks synced from your other device.');
+        }
     }
 
     function bindCloud() {

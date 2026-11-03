@@ -665,8 +665,9 @@
         });
 
         remoteTaskMap.forEach((task, id) => {
-            if (!localTaskMap.has(id)) added.push({ kind: 'task', id, label: taskLabel(task) });
-            else {
+            if (!localTaskMap.has(id)) {
+                added.push({ kind: 'task', id, label: `${taskLabel(task)} (other device)` });
+            } else {
                 const localTask = localTaskMap.get(id);
                 if (
                     !fieldEqual(localTask.text, task.text)
@@ -1636,7 +1637,7 @@
             ? mergeListsWithConflicts(live.lists || [], remoteLists)
             : { merged: [...(live.lists || [])], conflicts: [] };
         listMerge.conflicts.forEach(queueConflict);
-        const lists = contentPrefs.lists
+        let lists = contentPrefs.lists
             ? filterPulledLists(listMerge.merged, {
                 tombs: deletedLists,
                 idsAtStart,
@@ -1648,7 +1649,17 @@
             : listMerge.merged;
 
         const remoteTaskIds = new Set(remoteTasks.map((task) => String(task.id)));
-        const listIds = new Set(lists.map((list) => String(list.id)));
+        // Phone-created lists must stay available so their tasks are not dropped
+        // just because a local filter omitted the list row.
+        const listIdSet = new Set(lists.map((list) => String(list.id)));
+        remoteLists.forEach((list) => {
+            const id = String(list.id);
+            if (listIdSet.has(id)) return;
+            if (serverDeletedLists.has(id) || listIsDeleted(id, deletedLists)) return;
+            lists.push(list);
+            listIdSet.add(id);
+        });
+        const listIds = listIdSet;
         const taskMerge = contentPrefs.lists
             ? mergeTasksWithConflicts(live.tasks || [], remoteTasks)
             : { merged: [...(live.tasks || [])], conflicts: [] };

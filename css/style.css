@@ -937,6 +937,11 @@ body.orbit-mobile:not(.login-chip-hidden) .sidebar-account-link {
     z-index: 140;
 }
 
+.sync-preview-modal.modal-front,
+.sync-conflict-modal.modal-front {
+    z-index: 220;
+}
+
 .backup-pick-list {
     display: flex;
     flex-direction: column;
@@ -1026,7 +1031,18 @@ body.orbit-mobile:not(.login-chip-hidden) .sidebar-account-link {
 
 .sync-preview-content,
 .sync-conflict-content {
-    max-width: min(440px, 92vw);
+    max-width: min(520px, 92vw);
+    text-align: left;
+}
+
+.sync-preview-content h3,
+.sync-conflict-content h3 {
+    text-align: center;
+}
+
+.sync-preview-other-days {
+    margin-top: 0.35rem;
+    color: rgba(255, 255, 255, 0.82);
 }
 
 .sync-diff-block {
@@ -1046,8 +1062,9 @@ body.orbit-mobile:not(.login-chip-hidden) .sidebar-account-link {
     padding: 0.55rem 0.7rem;
     border-radius: 12px;
     background: rgba(255, 255, 255, 0.06);
-    max-height: 8.5rem;
+    max-height: min(12rem, 28vh);
     overflow: auto;
+    color: #fff;
 }
 
 .sync-diff-list li {
