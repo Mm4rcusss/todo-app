@@ -165,17 +165,34 @@ document.addEventListener('DOMContentLoaded', () => {
         return type === 'interval' || type === 'date' || type === 'range';
     }
 
+    function shiftDateKey(dateStr, days) {
+        const date = parseLocalDate(dateStr);
+        date.setDate(date.getDate() + days);
+        return formatDate(date);
+    }
+
     function todayDateKeys() {
-        // Local today plus UTC today so a phone in another timezone can still
-        // surface "today" tasks on this device's Today view.
+        // Phone and desktop can be a calendar day apart (UTC+8 evening is
+        // already "tomorrow" in UTC). Today shows local today, UTC today, and
+        // one day either side so a task added on the other device's today is
+        // still on screen after refresh resets the calendar to this device's today.
         const local = todayLocal();
         const utc = new Date().toISOString().slice(0, 10);
-        return local === utc ? [local] : [local, utc];
+        return [...new Set([
+            shiftDateKey(local, -1), local, shiftDateKey(local, 1),
+            shiftDateKey(utc, -1), utc, shiftDateKey(utc, 1)
+        ])];
+    }
+
+    function viewingDeviceToday() {
+        const local = todayLocal();
+        const utc = new Date().toISOString().slice(0, 10);
+        return state.currentDate === local || state.currentDate === utc;
     }
 
     function visibleTasks() {
         const todayKeys = new Set(todayDateKeys());
-        const viewingToday = todayKeys.has(state.currentDate);
+        const viewingToday = viewingDeviceToday();
         return state.tasks.filter((task) => {
             if (!sameId(task.listId, state.currentListId)) return false;
             if (isRecurringList()) return true;
@@ -955,7 +972,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.currentListId = state.lists[0]?.id || '';
             }
 
-            state.currentDate = todayLocal();
+            // Open on this device's today, but keep a saved day that is still
+            // inside the phone/desktop today window so refresh does not hide a
+            // task the other device just added.
+            if (!todayDateKeys().includes(state.currentDate)) {
+                state.currentDate = todayLocal();
+            }
             state.viewDate = state.currentDate;
 
             if (!state.settings.usedParticlesDefault) {
