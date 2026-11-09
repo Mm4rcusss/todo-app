@@ -965,6 +965,9 @@
     // the session with SIGNED_IN (current supabase-js) and must not look like
     // a new login — that wipe deleted tasks that had not uploaded yet.
     let explicitAuth = false;
+    // While sign-out is clearing storage, do not copy the IndexedDB session
+    // back into localStorage. A concurrent session read used to undo the clear.
+    let suppressAuthRestore = false;
 
     function legacyAuthStorageKey() {
         const projectRef = String(config().url || '').match(/https?:\/\/([^.]+)\.supabase\.co/i)?.[1];
@@ -1093,19 +1096,24 @@
             } catch {
                 /* Safari private mode / locked storage */
             }
+            if (suppressAuthRestore) return null;
             const backup = await authBackupGet(key);
-            if (backup) {
-                try { localStorage.setItem(key, backup); } catch { /* ignore */ }
-            }
+            // Sign-out may have started while this read was in flight. Drop the
+            // backup instead of writing it back over the cleared session.
+            if (suppressAuthRestore || !backup) return null;
+            try { localStorage.setItem(key, backup); } catch { /* ignore */ }
             return backup;
         },
         async setItem(key, value) {
+            if (String(key) === AUTH_STORAGE_KEY) suppressAuthRestore = false;
             try { localStorage.setItem(key, value); } catch { /* ignore */ }
             await authBackupSet(key, value);
         },
         async removeItem(key) {
-            try { localStorage.removeItem(key); } catch { /* ignore */ }
+            // Drop the backup before localStorage. The other order lets getItem
+            // treat a missing local key as "restore from IndexedDB".
             await authBackupDel(key);
+            try { localStorage.removeItem(key); } catch { /* ignore */ }
         }
     };
 
@@ -2543,15 +2551,15 @@
             }
         },
         async signOut() {
+            suppressAuthRestore = true;
             try {
                 const sb = await getClient();
                 if (sb) await sb.auth.signOut();
             } finally {
-                clearStoredAuth();
-                // Custom storage also keeps an IndexedDB copy. A failed
-                // supabase sign-out would not remove it, and the next launch
-                // would restore the session.
+                // Delete the IndexedDB copy first, then local keys. A session
+                // read during this finally must not copy the backup back.
                 try { await authBackupDel(AUTH_STORAGE_KEY); } catch { /* ignore */ }
+                clearStoredAuth();
             }
         },
         async changePassword(currentPassword, newPassword) {
