@@ -28,6 +28,7 @@
     let pullBlocked = false;
     let cachedUserId = null;
     let suppressSignedInWipe = false;
+    let authEventQueue = Promise.resolve();
     let baseTasks = new Map();
     let baseLists = new Map();
     let pendingConflicts = [];
@@ -964,18 +965,53 @@
     // the session with SIGNED_IN (current supabase-js) and must not look like
     // a new login — that wipe deleted tasks that had not uploaded yet.
     let explicitAuth = false;
+    // While sign-out is clearing storage, do not copy the IndexedDB session
+    // back into localStorage. A concurrent session read used to undo the clear.
+    let suppressAuthRestore = false;
+
+    function legacyAuthStorageKey() {
+        const projectRef = String(config().url || '').match(/https?:\/\/([^.]+)\.supabase\.co/i)?.[1];
+        return projectRef ? `sb-${projectRef}-auth-token` : '';
+    }
 
     function migrateAuthStorage() {
         try {
-            if (localStorage.getItem(AUTH_STORAGE_KEY)) return;
-            const projectRef = String(config().url || '').match(/https?:\/\/([^.]+)\.supabase\.co/i)?.[1];
-            if (!projectRef) return;
-            const legacyKey = `sb-${projectRef}-auth-token`;
+            const legacyKey = legacyAuthStorageKey();
+            if (!legacyKey) return;
             const legacy = localStorage.getItem(legacyKey);
-            if (legacy) localStorage.setItem(AUTH_STORAGE_KEY, legacy);
+            if (legacy && !localStorage.getItem(AUTH_STORAGE_KEY)) {
+                localStorage.setItem(AUTH_STORAGE_KEY, legacy);
+                // IndexedDB is the reload backup. Copy there too so a migrated
+                // session survives the same localStorage drop as a normal login.
+                void authBackupSet(AUTH_STORAGE_KEY, legacy);
+            }
+            // Remove the leftover after a successful copy, or whenever both keys
+            // exist, so sign-out cannot be undone by the next getClient().
+            if (localStorage.getItem(legacyKey) != null && localStorage.getItem(AUTH_STORAGE_KEY)) {
+                localStorage.removeItem(legacyKey);
+            }
         } catch {
             /* ignore */
         }
+    }
+
+    function clearStoredAuth() {
+        try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch { /* ignore */ }
+        const keys = new Set();
+        try {
+            const exact = legacyAuthStorageKey();
+            if (exact) keys.add(exact);
+            const length = Number(localStorage.length) || 0;
+            for (let i = 0; i < length; i += 1) {
+                const key = localStorage.key(i);
+                if (key && /^sb-.+-auth-token$/.test(key)) keys.add(key);
+            }
+        } catch {
+            /* ignore */
+        }
+        keys.forEach((key) => {
+            try { localStorage.removeItem(key); } catch { /* ignore */ }
+        });
     }
 
     function openAuthBackup() {
@@ -1060,19 +1096,24 @@
             } catch {
                 /* Safari private mode / locked storage */
             }
+            if (suppressAuthRestore) return null;
             const backup = await authBackupGet(key);
-            if (backup) {
-                try { localStorage.setItem(key, backup); } catch { /* ignore */ }
-            }
+            // Sign-out may have started while this read was in flight. Drop the
+            // backup instead of writing it back over the cleared session.
+            if (suppressAuthRestore || !backup) return null;
+            try { localStorage.setItem(key, backup); } catch { /* ignore */ }
             return backup;
         },
         async setItem(key, value) {
+            if (String(key) === AUTH_STORAGE_KEY) suppressAuthRestore = false;
             try { localStorage.setItem(key, value); } catch { /* ignore */ }
             await authBackupSet(key, value);
         },
         async removeItem(key) {
-            try { localStorage.removeItem(key); } catch { /* ignore */ }
+            // Drop the backup before localStorage. The other order lets getItem
+            // treat a missing local key as "restore from IndexedDB".
             await authBackupDel(key);
+            try { localStorage.removeItem(key); } catch { /* ignore */ }
         }
     };
 
@@ -1130,7 +1171,13 @@
         return stored;
     }
 
-    async function handleAuthEvent(event, session) {
+    async function handleAuthEvent(event, session, queuedFlags) {
+        // Flags are snapshotted when the event is queued. A real login must
+        // still wipe guest data if an earlier handler is running when the
+        // short explicitAuth window closes. A restored session snapshots
+        // explicitAuth false, so refresh keeps unsynced tasks.
+        const signedInOnPurpose = queuedFlags ? queuedFlags.explicitAuth : explicitAuth;
+        const suppressWipe = queuedFlags ? queuedFlags.suppressSignedInWipe : suppressSignedInWipe;
         if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
             await OrbitSync.consumeInviteFromUrl();
             const user = session?.user || null;
@@ -1148,7 +1195,7 @@
                 // SIGNED_IN when it restores a stored session on refresh — that
                 // must not wipe local tasks. Skip wipe on password re-auth too.
                 const sameUser = Boolean(user && previousUserId && previousUserId === user.id);
-                if (explicitAuth && !suppressSignedInWipe && !sameUser) {
+                if (signedInOnPurpose && !suppressWipe && !sameUser) {
                     clearLocalTombs();
                     await hooks.wipeGuestLocal?.();
                 }
@@ -1184,6 +1231,22 @@
             hooks.onStatus?.();
         }
         hooks.onAuth?.();
+    }
+
+    function enqueueSerial(task) {
+        const run = authEventQueue.then(task, task);
+        authEventQueue = run.then(() => {}, () => {});
+        return run;
+    }
+
+    function enqueueAuthEvent(event, session) {
+        const queuedFlags = {
+            explicitAuth,
+            suppressSignedInWipe
+        };
+        return enqueueSerial(() => handleAuthEvent(event, session, queuedFlags)).catch((err) => {
+            console.warn('Orbit auth event', err);
+        });
     }
 
     function storedInvite() {
@@ -2381,7 +2444,10 @@
             threeWayList,
             summarizeSyncDiff,
             mergeTasksWithConflicts,
-            mergeListsWithConflicts
+            mergeListsWithConflicts,
+            migrateAuthStorage,
+            clearStoredAuth,
+            enqueueSerial
         },
         async user() {
             return sessionUser();
@@ -2401,9 +2467,10 @@
             if (restoredUser?.id) cachedUserId = restoredUser.id;
             // Sync callback must not await auth APIs (getSession/getUser) or the
             // supabase-js auth lock deadlocks and reload looks signed-out.
+            // Handlers run later, one at a time, in the order events arrived.
             sb.auth.onAuthStateChange((event, session) => {
                 global.setTimeout(() => {
-                    void handleAuthEvent(event, session);
+                    enqueueAuthEvent(event, session);
                 }, 0);
             });
             document.addEventListener('visibilitychange', () => {
@@ -2484,9 +2551,16 @@
             }
         },
         async signOut() {
-            const sb = await getClient();
-            if (!sb) return;
-            await sb.auth.signOut();
+            suppressAuthRestore = true;
+            try {
+                const sb = await getClient();
+                if (sb) await sb.auth.signOut();
+            } finally {
+                // Delete the IndexedDB copy first, then local keys. A session
+                // read during this finally must not copy the backup back.
+                try { await authBackupDel(AUTH_STORAGE_KEY); } catch { /* ignore */ }
+                clearStoredAuth();
+            }
         },
         async changePassword(currentPassword, newPassword) {
             const sb = await getClient();

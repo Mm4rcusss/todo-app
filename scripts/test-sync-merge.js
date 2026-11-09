@@ -5,7 +5,9 @@ const store = Object.create(null);
 global.localStorage = {
     getItem(key) { return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null; },
     setItem(key, value) { store[key] = String(value); },
-    removeItem(key) { delete store[key]; }
+    removeItem(key) { delete store[key]; },
+    key(index) { return Object.keys(store)[index] || null; },
+    get length() { return Object.keys(store).length; }
 };
 global.window = global;
 global.document = { hidden: false, addEventListener() {} };
@@ -458,8 +460,226 @@ if (typeof sync.clearLocalTombs === 'function') {
     assert('clearLocalTombs: task tombs cleared', sync.deletedTaskIds().length === 0);
 }
 
-if (failed) {
-    console.error(`\n${failed} check(s) failed`);
-    process.exit(1);
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
-console.log('\nall sync merge checks passed');
+
+async function authStorageChecks() {
+    global.ORBIT_SUPABASE = {
+        url: 'https://pggxuazefxudgymqcuvl.supabase.co',
+        anonKey: 'test-anon-key'
+    };
+    const legacyKey = 'sb-pggxuazefxudgymqcuvl-auth-token';
+    const verifierKey = 'sb-pggxuazefxudgymqcuvl-auth-token-code-verifier';
+
+    localStorage.removeItem('orbit-todo-auth');
+    localStorage.setItem(legacyKey, 'legacy-session');
+    sync._test.migrateAuthStorage();
+    assert('migrate copies legacy auth then deletes it', localStorage.getItem('orbit-todo-auth') === 'legacy-session' && localStorage.getItem(legacyKey) == null);
+    sync._test.migrateAuthStorage();
+    assert('migrate is idempotent', localStorage.getItem('orbit-todo-auth') === 'legacy-session' && localStorage.getItem(legacyKey) == null);
+
+    localStorage.setItem('orbit-todo-auth', 'current-session');
+    localStorage.setItem(legacyKey, 'legacy-session');
+    sync._test.migrateAuthStorage();
+    assert(
+        'migrate drops leftover legacy when the new key already exists',
+        localStorage.getItem('orbit-todo-auth') === 'current-session' && localStorage.getItem(legacyKey) == null
+    );
+
+    localStorage.removeItem('orbit-todo-auth');
+    localStorage.setItem(legacyKey, 'legacy-session');
+    const originalSet = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (key, value) => {
+        if (key === 'orbit-todo-auth') throw new Error('quota');
+        originalSet(key, value);
+    };
+    let migrateThrew = false;
+    try { sync._test.migrateAuthStorage(); } catch { migrateThrew = true; }
+    localStorage.setItem = originalSet;
+    assert('migrate ignores storage write errors', !migrateThrew);
+    assert(
+        'failed migrate copy keeps the legacy key',
+        localStorage.getItem(legacyKey) === 'legacy-session' && localStorage.getItem('orbit-todo-auth') == null
+    );
+
+    const originalGet = localStorage.getItem.bind(localStorage);
+    localStorage.getItem = () => { throw new Error('denied'); };
+    migrateThrew = false;
+    try { sync._test.migrateAuthStorage(); } catch { migrateThrew = true; }
+    localStorage.getItem = originalGet;
+    assert('migrate ignores storage read errors', !migrateThrew);
+
+    localStorage.setItem('orbit-todo-auth', 'current-session');
+    localStorage.setItem('sb-otherproj-auth-token', 'other-session');
+    localStorage.setItem(verifierKey, 'verifier');
+    const originalRemove = localStorage.removeItem.bind(localStorage);
+    localStorage.removeItem = (key) => {
+        if (key === 'orbit-todo-auth') throw new Error('blocked');
+        originalRemove(key);
+    };
+    let clearThrew = false;
+    try { sync._test.clearStoredAuth(); } catch { clearThrew = true; }
+    localStorage.removeItem = originalRemove;
+    assert('clearStoredAuth ignores storage errors', !clearThrew);
+    assert('clearStoredAuth still removes other legacy tokens', localStorage.getItem('sb-otherproj-auth-token') == null);
+    assert('clearStoredAuth leaves the pkce verifier', localStorage.getItem(verifierKey) === 'verifier');
+    originalRemove('orbit-todo-auth');
+
+    let active = 0;
+    let maxActive = 0;
+    const order = [];
+    const track = (name, ms, fail) => sync._test.enqueueSerial(async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await delay(ms);
+        active -= 1;
+        if (fail) throw new Error(`fail ${name}`);
+        order.push(name);
+    });
+    const first = track('wipe', 30);
+    const second = track('push', 5, true);
+    const third = track('next', 5);
+    await first;
+    await second.catch(() => {});
+    await third;
+    assert('auth handlers do not overlap', maxActive === 1);
+    assert('auth handlers continue in order after a failure', order.join(',') === 'wipe,next');
+
+    let guest = ['guest-todo'];
+    let pushed = null;
+    const wipe = sync._test.enqueueSerial(async () => {
+        await delay(15);
+        guest = ['cloud-todo'];
+    });
+    const push = sync._test.enqueueSerial(async () => {
+        pushed = guest.slice();
+    });
+    await wipe;
+    await push;
+    assert('queued sign-in wipe finishes before a later push', pushed.join(',') === 'cloud-todo');
+
+    let signOutCalls = 0;
+    global.supabase = {
+        createClient() {
+            return {
+                auth: {
+                    signOut() {
+                        signOutCalls += 1;
+                        return Promise.reject(new Error('network'));
+                    }
+                }
+            };
+        }
+    };
+    localStorage.setItem('orbit-todo-auth', 'current-session');
+    localStorage.setItem(legacyKey, 'legacy-session');
+    localStorage.setItem('sb-otherproj-auth-token', 'other-session');
+    localStorage.setItem(verifierKey, 'verifier');
+    let signOutError = '';
+    try {
+        await sync.signOut();
+    } catch (err) {
+        signOutError = err.message;
+    }
+    assert('signOut still surfaces auth errors', signOutError === 'network' && signOutCalls === 1);
+    assert('signOut clears orbit-todo-auth', localStorage.getItem('orbit-todo-auth') == null);
+    assert('signOut clears the project legacy token', localStorage.getItem(legacyKey) == null);
+    assert('signOut clears every leftover sb-*-auth-token', localStorage.getItem('sb-otherproj-auth-token') == null);
+    assert('signOut does not clear the pkce verifier', localStorage.getItem(verifierKey) === 'verifier');
+
+    const backupStore = new Map();
+    const pendingGets = [];
+    let holdGets = false;
+    global.indexedDB = {
+        open() {
+            const request = { onsuccess: null, onerror: null, onupgradeneeded: null, result: null };
+            queueMicrotask(() => {
+                request.result = {
+                    objectStoreNames: { contains() { return true; } },
+                    transaction() {
+                        const tx = { oncomplete: null, onerror: null };
+                        tx.objectStore = () => ({
+                            get(key) {
+                                const req = {
+                                    result: backupStore.has(String(key)) ? backupStore.get(String(key)) : null,
+                                    onsuccess: null,
+                                    onerror: null
+                                };
+                                const fire = () => { if (req.onsuccess) req.onsuccess(); };
+                                if (holdGets) pendingGets.push(fire);
+                                else queueMicrotask(fire);
+                                return req;
+                            },
+                            put(value, key) {
+                                backupStore.set(String(key), String(value));
+                                queueMicrotask(() => { if (tx.oncomplete) tx.oncomplete(); });
+                                return {};
+                            },
+                            delete(key) {
+                                backupStore.delete(String(key));
+                                queueMicrotask(() => { if (tx.oncomplete) tx.oncomplete(); });
+                                return {};
+                            }
+                        });
+                        return tx;
+                    },
+                    close() {}
+                };
+                if (request.onsuccess) request.onsuccess();
+            });
+            return request;
+        }
+    };
+
+    delete require.cache[require.resolve('../js/sync.js')];
+    require('../js/sync.js');
+    const fresh = global.OrbitSync;
+
+    const sessionJson = JSON.stringify({ user: { id: 'user-1', email: 'a@b.c' } });
+    backupStore.set('orbit-todo-auth', sessionJson);
+    localStorage.removeItem('orbit-todo-auth');
+    const restored = await fresh.user();
+    assert(
+        'indexedDB backup restores a signed-in session',
+        restored?.id === 'user-1' && localStorage.getItem('orbit-todo-auth') === sessionJson
+    );
+
+    localStorage.removeItem('orbit-todo-auth');
+    backupStore.set('orbit-todo-auth', sessionJson);
+    holdGets = true;
+    const reading = fresh.user();
+    for (let i = 0; i < 50 && pendingGets.length === 0; i += 1) await delay(10);
+    assert('session read is waiting on the indexedDB backup', pendingGets.length === 1);
+    let raceSignOut = '';
+    try {
+        await fresh.signOut();
+    } catch (err) {
+        raceSignOut = err.message;
+    }
+    holdGets = false;
+    while (pendingGets.length) pendingGets.shift()();
+    await reading;
+    assert('signOut still surfaces auth errors after the backup race', raceSignOut === 'network');
+    assert(
+        'in-flight session read does not restore auth during sign-out',
+        localStorage.getItem('orbit-todo-auth') == null && backupStore.has('orbit-todo-auth') === false
+    );
+    const afterSignOut = await fresh.user();
+    assert(
+        'sign-out stays signed out when a backup used to exist',
+        afterSignOut == null && localStorage.getItem('orbit-todo-auth') == null
+    );
+    delete global.indexedDB;
+}
+
+authStorageChecks().then(() => {
+    if (failed) {
+        console.error(`\n${failed} check(s) failed`);
+        process.exit(1);
+    }
+    console.log('\nall sync merge checks passed');
+}).catch((err) => {
+    console.error(err);
+    process.exit(1);
+});
